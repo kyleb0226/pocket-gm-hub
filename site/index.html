@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Pocket GM — Soccer, Baseball, Hockey</title>
+<meta name="description" content="Three single-file management sims: run a football club, a baseball front office, or a hockey team. Free, offline-capable, saves in your browser." />
+<link rel="manifest" href="manifest.json" />
+<link rel="apple-touch-icon" href="apple-touch-icon.png" />
+<link rel="icon" href="icon-192.png" />
+<meta name="theme-color" content="#0b1220" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Pocket GM" />
+<style>
+  :root {
+    --bg: #0b1220;
+    --card: #131c30;
+    --card-hi: #1a2540;
+    --line: #24304d;
+    --text: #eaf0ff;
+    --muted: #93a2c4;
+    --soccer: #34d399;
+    --baseball: #f87171;
+    --hockey: #60a5fa;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    -webkit-tap-highlight-color: transparent;
+  }
+  .glow {
+    position: fixed; inset: -30% -10% auto -10%; height: 60vh; pointer-events: none; z-index: 0;
+    background:
+      radial-gradient(40% 60% at 20% 40%, rgba(52,211,153,.14), transparent 70%),
+      radial-gradient(40% 60% at 50% 30%, rgba(248,113,113,.12), transparent 70%),
+      radial-gradient(40% 60% at 80% 45%, rgba(96,165,250,.14), transparent 70%);
+    filter: blur(10px);
+  }
+  .wrap { position: relative; z-index: 1; max-width: 940px; margin: 0 auto; padding: 40px 20px 56px; }
+
+  header { text-align: center; margin-bottom: 34px; }
+  .mark {
+    display: inline-flex; gap: 6px; align-items: center; justify-content: center;
+    margin-bottom: 14px;
+  }
+  .mark i { width: 9px; height: 9px; border-radius: 50%; display: block; }
+  h1 { font-size: clamp(30px, 7vw, 46px); line-height: 1.1; margin: 0 0 10px; letter-spacing: -.02em; }
+  .tag { color: var(--muted); margin: 0 auto; max-width: 34rem; font-size: 15px; }
+
+  .games { display: grid; gap: 14px; grid-template-columns: 1fr; }
+  @media (min-width: 720px) { .games { grid-template-columns: repeat(3, 1fr); } }
+
+  .game {
+    display: flex; flex-direction: column; gap: 10px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 18px;
+    padding: 20px; text-decoration: none; color: inherit;
+    transition: transform .15s ease, background .15s ease, border-color .15s ease;
+    position: relative; overflow: hidden;
+  }
+  .game::before {
+    content: ""; position: absolute; inset: 0 0 auto 0; height: 3px; background: var(--accent);
+  }
+  .game:hover, .game:focus-visible { transform: translateY(-3px); background: var(--card-hi); border-color: var(--accent); outline: none; }
+  .game:active { transform: translateY(0); }
+  .badge {
+    width: 46px; height: 46px; border-radius: 13px; display: grid; place-items: center;
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+    font-size: 24px; line-height: 1;
+  }
+  .game h2 { margin: 4px 0 0; font-size: 19px; letter-spacing: -.01em; }
+  .game p { margin: 0; color: var(--muted); font-size: 14px; flex: 1; }
+  .play { font-size: 14px; font-weight: 600; color: var(--accent); }
+  .play::after { content: " →"; }
+  /* On a phone, lay each card out as a row so all three fit without scrolling.
+     Must come after the .game rules above — a media query adds no specificity. */
+  @media (max-width: 719px) {
+    .game { display: grid; grid-template-columns: 46px 1fr; column-gap: 14px; row-gap: 3px; align-items: start; padding: 16px; }
+    .badge { grid-row: 1 / span 3; }
+    .game h2 { margin: 0; }
+  }
+
+  .panel {
+    margin-top: 30px; background: var(--card); border: 1px solid var(--line);
+    border-radius: 18px; padding: 22px;
+  }
+  .panel h3 { margin: 0 0 6px; font-size: 17px; }
+  .panel p { margin: 0 0 14px; color: var(--muted); font-size: 14px; }
+  .steps { margin: 0; padding-left: 20px; color: var(--muted); font-size: 14px; }
+  .steps li { margin-bottom: 5px; }
+  .steps strong { color: var(--text); font-weight: 600; }
+  .cols { display: grid; gap: 20px; grid-template-columns: 1fr; }
+  @media (min-width: 640px) { .cols { grid-template-columns: 1fr 1fr; } }
+  .cols h4 { margin: 0 0 8px; font-size: 14px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+
+  #install {
+    display: none; margin-top: 16px; width: 100%; padding: 13px 18px; font: inherit; font-weight: 600;
+    color: #06210f; background: var(--soccer); border: 0; border-radius: 12px; cursor: pointer;
+  }
+  #install:active { filter: brightness(.93); }
+
+  footer { margin-top: 30px; text-align: center; color: var(--muted); font-size: 13px; }
+  footer a { color: var(--muted); }
+  .note { margin-top: 10px; font-size: 13px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="glow"></div>
+<div class="wrap">
+
+  <header>
+    <span class="mark">
+      <i style="background:var(--soccer)"></i>
+      <i style="background:var(--baseball)"></i>
+      <i style="background:var(--hockey)"></i>
+    </span>
+    <h1>Pocket GM</h1>
+    <p class="tag">Three management sims that run entirely in your browser. No account, no install required, saves stay on your device.</p>
+  </header>
+
+  <main class="games">
+    <a class="game" href="/soccer/" style="--accent: var(--soccer)">
+      <span class="badge">⚽</span>
+      <h2>Soccer</h2>
+      <p>Four nations, two tiers, promotion and relegation. Pick your XI and formation, work the transfer market, win the cup.</p>
+      <span class="play">Play</span>
+    </a>
+
+    <a class="game" href="/baseball/" style="--accent: var(--baseball)">
+      <span class="badge">⚾</span>
+      <h2>Baseball</h2>
+      <p>Run the front office of a 30-team league. Draft, free agency, trades, the playoffs, and a franchise across many seasons.</p>
+      <span class="play">Play</span>
+    </a>
+
+    <a class="game" href="/hockey/" style="--accent: var(--hockey)">
+      <span class="badge">🏒</span>
+      <h2>Hockey</h2>
+      <p>32 clubs, a hard salary cap, four forward lines and three defence pairs. Shots come out of line-vs-line matchups.</p>
+      <span class="play">Play</span>
+    </a>
+  </main>
+
+  <section class="panel">
+    <h3>Put it on your home screen</h3>
+    <p>Each game installs as its own app with its own icon — open the game first, then add it. Adding this page instead gives you a single icon that opens the menu.</p>
+    <div class="cols">
+      <div>
+        <h4>iPhone / iPad</h4>
+        <ol class="steps">
+          <li>Open the game in <strong>Safari</strong>.</li>
+          <li>Tap the <strong>Share</strong> button (the square with an arrow).</li>
+          <li>Choose <strong>Add to Home Screen</strong>, then <strong>Add</strong>.</li>
+        </ol>
+      </div>
+      <div>
+        <h4>Android</h4>
+        <ol class="steps">
+          <li>Open the game in <strong>Chrome</strong>.</li>
+          <li>Tap the <strong>⋮</strong> menu.</li>
+          <li>Choose <strong>Install app</strong> or <strong>Add to Home screen</strong>.</li>
+        </ol>
+      </div>
+    </div>
+    <button id="install" type="button">Install Pocket GM</button>
+    <p class="note" id="installed-note" hidden>Installed — look for the Pocket GM icon on your home screen.</p>
+  </section>
+
+  <footer>
+    Source:
+    <a href="https://github.com/kyleb0226/soccer-gm">soccer</a> ·
+    <a href="https://github.com/kyleb0226/baseball-gm">baseball</a> ·
+    <a href="https://github.com/kyleb0226/hockey-gm">hockey</a>
+  </footer>
+
+</div>
+
+<script>
+  // Chrome/Edge fire this when the page qualifies as installable; Safari never does,
+  // which is why the written iOS steps above are not behind the button.
+  let deferred = null;
+  const btn = document.getElementById('install');
+  window.addEventListener('beforeinstallprompt', e => {
+    e.preventDefault();
+    deferred = e;
+    btn.style.display = 'block';
+  });
+  btn.addEventListener('click', async () => {
+    if (!deferred) return;
+    deferred.prompt();
+    await deferred.userChoice;
+    deferred = null;
+    btn.style.display = 'none';
+  });
+  window.addEventListener('appinstalled', () => {
+    btn.style.display = 'none';
+    document.getElementById('installed-note').hidden = false;
+  });
+
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js'));
+  }
+</script>
+</body>
+</html>
