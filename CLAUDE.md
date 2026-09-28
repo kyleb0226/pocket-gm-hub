@@ -36,11 +36,16 @@ Registered in `~/.claude/launch.json` as `pocket-gm-hub` on port 8150. Serve ove
 
 Applied here so the game repos stay independent of this site:
 
-- **soccer** hardcodes its GitHub Pages path `/soccer-gm/` inside `sw.js` and `manifest.json`.
-  Both are rewritten to relative paths. If soccer-gm ever switches to relative paths (hockey-gm
-  already did, and its `sw.js` comment says why), this patch becomes a no-op.
-- **baseball** is missing `apple-mobile-web-app-capable` and friends; injected so all three
-  install to an iOS home screen identically.
+- **soccer** used to hardcode its GitHub Pages path `/soccer-gm/` inside `sw.js` and
+  `manifest.json`; `patchSoccer` rewrites them to relative paths.
+- **baseball** used to lack `apple-mobile-web-app-capable` and friends; `patchBaseball` injects them.
+
+As of the 2026-09 parity pass both games fix this at the source (relative paths; the same `<head>`
+and safe-area padding as hockey), so once that reaches each repo's `main` both patches are no-ops.
+They stay as guards — they only act when the problem is present.
+
+Each game's CLAUDE.md now opens with an identical **"The Pocket GM family"** section (ports, save
+keys, shared conventions, feature-parity table). If you change one copy, change all three.
 
 ## Why one origin is safe
 
