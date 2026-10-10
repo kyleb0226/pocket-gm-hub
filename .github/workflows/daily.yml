@@ -31,8 +31,12 @@ on:
         default: "auto"
         type: choice
         options: [auto, S, M, L]
-  schedule:
-    - cron: "0 12 * * *"   # 8am ET / 7am EST
+  # Paused when the games moved into pocket-gm-hub (Oct 2026): it was failing
+  # every morning before the move, and it only knows about hockey while new
+  # features are now meant to land in all three games together. Run it by hand
+  # from the Actions tab, or restore the schedule once the prompt covers all three.
+  # schedule:
+  #   - cron: "0 12 * * *"   # 8am ET / 7am EST
 
 permissions:
   contents: write
@@ -41,6 +45,10 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # The game lives in hockey/ of the pocket-gm-hub monorepo.
+    defaults:
+      run:
+        working-directory: hockey
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -109,6 +117,8 @@ jobs:
           prompt: |
             You are the daily autopilot for Pocket GM — Hockey, a single-file
             React hockey management game. Today is ${{ steps.brief.outputs.date }}.
+            The game lives in `hockey/` of a monorepo that also holds `soccer/`
+            and `baseball/`; work inside `hockey/` and leave the others alone.
 
             Your job today is to ship exactly ONE improvement, verified, and
             leave the repo better than you found it. Not two. Not a sweeping
@@ -225,7 +235,7 @@ jobs:
           FAIL=""
 
           # The workflow is not the agent's to edit.
-          if ! git diff --quiet -- .github/; then
+          if ! git diff --quiet -- ../.github/; then
             FAIL="the run tried to modify .github/"
           fi
 

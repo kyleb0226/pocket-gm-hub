@@ -1,11 +1,11 @@
-const CACHE = 'soccer-gm-v3';
+const CACHE = 'soccer-gm-v4';
 const ASSETS = [
-  '/soccer-gm/',
-  '/soccer-gm/index.html',
-  '/soccer-gm/vendor/react.production.min.js',
-  '/soccer-gm/vendor/react-dom.production.min.js',
-  '/soccer-gm/vendor/babel.min.js',
-  '/soccer-gm/vendor/tailwind.js',
+  './',
+  './index.html',
+  './vendor/react.production.min.js',
+  './vendor/react-dom.production.min.js',
+  './vendor/babel.min.js',
+  './vendor/tailwind.js',
 ];
 
 self.addEventListener('install', e => {

@@ -6,11 +6,12 @@
  * opened. Passing through (no respondWith) leaves the browser's default fetch in
  * charge, so the hub can never serve a stale copy of a game.
  */
-const CACHE = "pocketgm-hub-v1";
+const CACHE = "pocketgm-hub-v2";
 const GAMES = ["/soccer/", "/baseball/", "/hockey/"];
 const SHELL = [
   "/",
   "/index.html",
+  "/saves.js",
   "/manifest.json",
   "/icon-192.png",
   "/icon-512.png",

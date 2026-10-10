@@ -106,6 +106,13 @@
   }
   #install:active { filter: brightness(.93); }
 
+  .save-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+  .save-actions button {
+    flex: 1 1 160px; padding: 12px 16px; font: inherit; font-weight: 600; color: var(--text);
+    background: var(--card-hi); border: 1px solid var(--line); border-radius: 12px; cursor: pointer;
+  }
+  .save-actions button:disabled { opacity: .5; cursor: default; }
+
   footer { margin-top: 30px; text-align: center; color: var(--muted); font-size: 13px; }
   footer a { color: var(--muted); }
   .note { margin-top: 10px; font-size: 13px; color: var(--muted); }
@@ -148,6 +155,17 @@
     </a>
   </main>
 
+  <section class="panel saves">
+    <h3>Your saves</h3>
+    <p>Back up every franchise from all three games to one file, or restore a backup — including one exported from the old single-game apps. Restoring adds careers; it never replaces one that's already here.</p>
+    <div class="save-actions">
+      <button id="backup" type="button">Back up all saves</button>
+      <button id="restore" type="button">Restore from a backup</button>
+    </div>
+    <input id="restore-file" type="file" accept=".json,application/json" hidden />
+    <p class="note" id="save-status" hidden></p>
+  </section>
+
   <section class="panel">
     <h3>Put it on your home screen</h3>
     <p>Each game installs as its own app with its own icon — open the game first, then add it. Adding this page instead gives you a single icon that opens the menu.</p>
@@ -174,10 +192,7 @@
   </section>
 
   <footer>
-    Source:
-    <a href="https://github.com/kyleb0226/soccer-gm">soccer</a> ·
-    <a href="https://github.com/kyleb0226/baseball-gm">baseball</a> ·
-    <a href="https://github.com/kyleb0226/hockey-gm">hockey</a>
+    Source: <a href="https://github.com/kyleb0226/pocket-gm-hub">pocket-gm-hub</a>
   </footer>
 
 </div>
@@ -192,7 +207,7 @@
     deferred = e;
     btn.style.display = 'block';
   });
-  btn.addEventListener('click', async () => {
+  btn?.addEventListener('click', async () => {
     if (!deferred) return;
     deferred.prompt();
     await deferred.userChoice;
@@ -207,6 +222,52 @@
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js'));
   }
+</script>
+<script src="saves.js"></script>
+<script>
+  // Backup / restore. Inside the iOS app a download link goes nowhere, so the file
+  // is handed to the app (window.webkit…pgmSaves), which opens the share sheet.
+  const status = msg => { const el = document.getElementById('save-status'); el.textContent = msg; el.hidden = false; };
+  const native = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.pgmSaves;
+
+  document.getElementById('backup').addEventListener('click', async e => {
+    e.target.disabled = true;
+    try {
+      const b = await PGMSaves.exportAll('Pocket GM');
+      const n = Object.keys(b.localStorage).length + Object.values(b.idb).reduce((t, d) => t + Object.keys(d).length, 0);
+      if (!n) { status('No saves on this device yet.'); return; }
+      const name = `pocket-gm-saves-${b.created.slice(0, 10)}.json`;
+      const json = JSON.stringify(b);
+      if (native) native.postMessage({ name, json });
+      else {
+        const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([json], { type: 'application/json' })), download: name });
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+      }
+      status(`Backed up ${(json.length / 1e6).toFixed(1)} MB of saves.`);
+    } catch (err) {
+      status('Backup failed: ' + err.message);
+    } finally {
+      e.target.disabled = false;
+    }
+  });
+
+  const restoreFile = document.getElementById('restore-file');
+  document.getElementById('restore').addEventListener('click', () => restoreFile.click());
+  window.pgmRestore = async json => {
+    const r = await PGMSaves.importBackup(typeof json === 'string' ? JSON.parse(json) : json);
+    const parts = ['soccer', 'baseball', 'hockey'].filter(g => r[g]).map(g => `${r[g]} ${g}`);
+    status((parts.length ? `Restored ${parts.join(', ')} save${parts.length > 1 || r[parts[0]] > 1 ? 's' : ''}.` : 'Nothing new to restore — those saves are already here.') +
+      (r.skipped.length ? ` Skipped: ${r.skipped.join('; ')}.` : ''));
+    return r;
+  };
+  restoreFile.addEventListener('change', async () => {
+    const f = restoreFile.files[0];
+    restoreFile.value = '';
+    if (!f) return;
+    status('Restoring…');
+    try { await window.pgmRestore(await f.text()); } catch (err) { status('Restore failed: ' + err.message); }
+  });
 </script>
 </body>
 </html>
