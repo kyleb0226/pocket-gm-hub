@@ -82,6 +82,20 @@ which is what makes line construction and last change matter.
   defending pair's continuity has to be known (it belongs to the *opponent* of the side generating
   shots) before that opponent's shot rate is calculated, so the two can't share the single
   attacker-only pass `lineChemistry` used alone.
+- **`autoLines` keeps what it doesn't have to change.** It used to rebuild all four lines and all
+  three pairs from the depth chart on every call, so ANY invalidation — one call-up, one injury
+  anywhere on the roster — reset every streak `lineChemistry`/`pairChemistry` had going, not just
+  the one line the change actually touched. `t.lastLines` (never nulled by the ~20 call sites that
+  null `t.lines` on injury/trade/recall) holds the previous assignment; a line or pair whose players
+  are all still active and unclaimed is copied straight across, same slots, so its signature and
+  therefore its streak survive. **Reservation runs as its own pass before any rebuilt line is
+  filled** — doing it in one pass let the rebuild for line 1 poach a player line 3 was about to
+  keep, since he was still sitting unclaimed in the position pool when line 1 went first. The manual
+  line editor (`LinesTab`'s `swap`, and `moveLine` for bumping a whole line or pair up or down as
+  a unit) writes `t.lastLines` too, so a hand-built pairing survives the same way an automatic one
+  does. `moveLine` swaps two slots wholesale rather than one player at a time, but chemistry is
+  still keyed by slot index, so the trio it carries into the new slot starts its streak over —
+  same trade-off as `swap` already makes.
 - **Shot zones (`SHOT_ZONES`, `pickZone`):** every shot picks a zone first — rush, cycle or point
   — and the zone decides both *who* shoots (`dBias` makes the point a defenceman's shot) and *how
   stoppable* it is (`save` offsets the goalie's percentage). Conversion must stay ordered

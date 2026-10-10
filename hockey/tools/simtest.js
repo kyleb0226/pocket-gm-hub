@@ -28,7 +28,7 @@ const EXPORTS = [
   "rules", "setRule", "ruleValue", "applyPendingRules", "RULES_DEFAULT", "STRUCTURAL_RULES",
   "standings", "divStandings", "confStandings", "playoffField",
   "capHit", "capSpace", "capFloor", "marketValue", "teamStrength",
-  "rosterOf", "activeRoster", "playersOf", "autoLines", "ensureLines",
+  "rosterOf", "activeRoster", "playersOf", "autoLines", "ensureLines", "lineupChangeNote",
   "evalTrade", "doTrade", "signPlayer", "aiFreeAgency", "computeAwards",
   "pts", "svPct", "gaa", "ovrOf", "TEAMS", "DIVS", "CONFS", "ROSTER_MAX", "POS",
   "DIFFICULTIES", "LINE_TOI",
@@ -60,7 +60,7 @@ const EXPORTS = [
   "DRAFT_ROUNDS", "draftPicksTotal", "closeDraft", "scoutProspect", "scoutedOvr", "scoutedPot",
   "scoutBand", "scoutLabel", "draftValue", "SCOUT_POINTS",
   "pruneSave", "ZONE_KEYS", "NET_CELLS", "NET_KEYS", "goalieHole", "shooterSpot", "pickCell", "blankNet", "saveGame", "loadGame", "slotMeta", "unwrap", "deleteSlot", "localStorage",
-  "lineChemistry", "LINE_CHEM_MAX_GAMES", "pairChemistry", "PAIR_CHEM_MAX_GAMES",
+  "lineChemistry", "LINE_CHEM_MAX_GAMES", "pairChemistry", "PAIR_CHEM_MAX_GAMES", "jelledNote",
   "seasonBallots", "honoursOf", "HONOUR_MIN_GP",
   "draftOrigin", "farmRoom", "farmRoomBonus", "DEV_WIN_SWING", "DEV_WIN_TITLE",
   "seasonLeaders", "ROSTER_MIN",
@@ -91,6 +91,7 @@ const EXPORTS = [
   "MARKETS", "relocationOptions", "relocate", "sweaterOf", "sweaterMap", "NAMES", "fullName",
   "COACH_FIRST", "COACH_LAST",
   "brokerFee", "brokerCandidates", "brokerTrade", "BROKER_FEE_RATE",
+  "evalTrade3", "doTrade3",
   "PULL_TIMINGS", "pullTiming",
   "PRESSERS", "pickPresser", "answerPresser", "fanMood", "moveFans", "PRESSER_COOLDOWN",
   "POINT_STREAK_NEWS", "WIN_STREAK_NEWS",
@@ -114,6 +115,8 @@ const EXPORTS = [
   "extendEarlyYears", "EXTEND_EARLY_MAX", "EXTEND_EARLY_PREMIUM", "EXTEND_TERM_MAX",
   "draftOrderRows", "draftOnePick", "draftProjection", "starList", "toggleStar", "autoPickFor",
   "resultFor", "PICK_ROUNDS",
+  "seasonMonth", "SEASON_MONTHS", "goalieMonthSplit", "goalieRestSplit",
+  "achievementLabel", "seasonSummaryData", "seasonSummaryText",
 ];
 
 /* ------------------------------- load the app ---------------------------- */
@@ -451,6 +454,20 @@ const CHECKS = {
     const ids = new Set(A.activeRoster(G, 0).map((p) => p.id));
     const dangling = lines.F.flat().concat(lines.D.flat(), lines.G).filter((id) => id != null && !ids.has(id));
     ok(dangling.length === 0, "no line slot points at a player who left");
+
+    // Trading away a linemate breaks up a jelled line the same way an injury
+    // or a call-up does, and the news feed has to say so — it used to stay
+    // silent about the one roster event most likely to force a reshuffle.
+    const winger = G.players[lines.F[0][0]];
+    const spare = A.rosterOf(G, 2).sort((x, y) => x.ovr - y.ovr)[0];
+    G.news = [];
+    const tr = A.doTrade(G, 0, [winger.id], [], 2, [spare.id], []);
+    if (tr.ok) {
+      ok(G.news[0] && /Line|Pair/.test(G.news[0].text),
+        `the trade news names the line it broke up (${G.news[0] && G.news[0].text})`);
+    } else {
+      ok(true, `the AI declined this trade too, which is allowed (${tr.why})`);
+    }
   },
 
   // The rollover: ageing, contracts, the draft, and a league that can play again.
@@ -564,6 +581,20 @@ const CHECKS = {
     A.lineChemistry(t0, swapped);
     ok(t0.lineChem[0] === 1, "and it starts building again from there");
 
+    // A whole-line reorder (LinesTab's moveLine, which swaps two full rows
+    // rather than one player) leaves the trio itself unchanged, so its streak
+    // must travel with it into the new slot instead of resetting the way a
+    // per-player swap does.
+    t0.lineChem = null; t0.lineSig = null;
+    for (let i = 0; i < A.LINE_CHEM_MAX_GAMES + 5; i++) A.lineChemistry(t0, fresh);
+    const reordered = JSON.parse(JSON.stringify(fresh));
+    [reordered.F[0], reordered.F[1]] = [reordered.F[1], reordered.F[0]];
+    A.lineChemistry(t0, reordered);
+    ok(t0.lineChem[0] === A.LINE_CHEM_MAX_GAMES,
+      `the line promoted into slot 1 keeps its capped streak (${t0.lineChem[0]})`);
+    ok(t0.lineChem[1] === A.LINE_CHEM_MAX_GAMES,
+      `and the line bumped down to slot 2 keeps its streak too (${t0.lineChem[1]})`);
+
     // Defence pairs build the same continuity bonus as forward lines. Driven
     // directly for the same reason the forward version is: simming sixty days
     // and expecting the cap really asks "did anybody get hurt".
@@ -581,6 +612,33 @@ const CHECKS = {
     A.pairChemistry(t0, swappedD);
     ok(t0.pairChem[0] === 1, "and it starts building again");
 
+    // Same whole-row reorder, for defence pairs.
+    t0.pairChem = null; t0.pairSig = null;
+    for (let i = 0; i < A.PAIR_CHEM_MAX_GAMES + 5; i++) A.pairChemistry(t0, fresh);
+    const reorderedD = JSON.parse(JSON.stringify(fresh));
+    [reorderedD.D[0], reorderedD.D[1]] = [reorderedD.D[1], reorderedD.D[0]];
+    A.pairChemistry(t0, reorderedD);
+    ok(t0.pairChem[0] === A.PAIR_CHEM_MAX_GAMES,
+      `the pair promoted into slot 1 keeps its capped streak (${t0.pairChem[0]})`);
+    ok(t0.pairChem[1] === A.PAIR_CHEM_MAX_GAMES,
+      `and the pair bumped down to slot 2 keeps its streak too (${t0.pairChem[1]})`);
+
+    // The box score's chem snapshot (`res.chem`, what GameTab's note reads)
+    // has to reconcile with the streaks the game itself just advanced — every
+    // line and pair here is capped from the reorder tests above.
+    const chemBox = A.simGame(G, 0, 1, {}).chem;
+    ok(chemBox[0].F.length === 4 && chemBox[0].D.length === 3,
+      "a game's chem snapshot carries all four lines and all three pairs");
+    ok(JSON.stringify(chemBox[0].F) === JSON.stringify(t0.lineChem),
+      "the home side's snapshot matches what the game just did to t.lineChem");
+    ok(JSON.stringify(chemBox[0].D) === JSON.stringify(t0.pairChem),
+      "same for the pairs");
+    const jelled = A.jelledNote(chemBox[0]);
+    ok(jelled.includes("Line 1") && jelled.includes("Pair 1"),
+      `every line and pair here is capped, so the note names them all (${jelled})`);
+    ok(A.jelledNote({ F: [0, 0, 0, 0], D: [0, 0, 0] }) === "", "a brand-new lineup gets no note at all");
+    ok(A.jelledNote(null) === "", "no snapshot, no note");
+
     // An injury must not leave a hole in the lineup.
     const victim = G.players[L.F[0][1]];
     victim.inj = 10;
@@ -588,6 +646,43 @@ const CHECKS = {
     const L2 = A.ensureLines(G, 0);
     const stillIn = L2.F.flat().includes(victim.id);
     ok(!stillIn, "an injured player is pulled out of the lineup");
+
+    // A line or pair the injury didn't touch keeps the men it had, so its
+    // chemistry streak survives an unrelated call-up or trade instead of
+    // resetting to zero every time anything on the roster changes.
+    ok(JSON.stringify(L2.F[2]) === JSON.stringify(L.F[2]),
+      "a forward line nowhere near the injury is untouched by the rebuild");
+    ok(JSON.stringify(L2.D[2]) === JSON.stringify(L.D[2]),
+      "same for a defence pair — the injury was up front");
+    ok(JSON.stringify(L2.F[0]) !== JSON.stringify(L.F[0]),
+      "but the line that actually lost a man is rebuilt");
+
+    // The note in the news feed names the line that actually moved, not just
+    // that something did — a plain diff of t.lastLines before and after.
+    const note = A.lineupChangeNote(G, 0, { F: L.F, D: L.D });
+    ok(note.includes("Line 1"), `the note names the line that changed (${note})`);
+    ok(!note.includes("Line 3") && !note.includes("Pair"),
+      `and nothing untouched, since only line 1 lost a man (${note})`);
+    ok(A.lineupChangeNote(G, 0, null) === "", "no note when there's nothing to compare against");
+
+    // A call-up now reaches the persisted news feed, not just a UI toast, and
+    // carries the same reshuffle note.
+    const farmhand = A.rosterOf(G, 0, true).find((p) => p.farm);
+    if (farmhand) {
+      G.news = [];
+      const before = G.teams[0].lines ? JSON.parse(JSON.stringify(G.teams[0].lastLines)) : null;
+      const r = A.recall(G, farmhand.id);
+      if (r.ok) {
+        ok(G.news[0] && G.news[0].text.includes("called up"), "the call-up is in the news feed");
+        if (before) {
+          const stillTogether = JSON.stringify(before.F.concat(before.D)) ===
+            JSON.stringify(G.teams[0].lastLines.F.concat(G.teams[0].lastLines.D));
+          ok(stillTogether || /Line|Pair/.test(G.news[0].text),
+            "and says so when the call-up actually bumped somebody out of the lineup");
+        }
+      }
+    }
+
     A.simDays(G, 3);
     ok(true, "the club keeps playing a man down");
   },
@@ -680,13 +775,51 @@ const CHECKS = {
     ok(soScorers.length > 0, `shootout scorers are tracked separately (${soScorers.length})`);
   },
 
+  // The goalie page's workload chart is two slices of G.gameLog — nothing new
+  // to track, so this pins that the slicing itself is honest.
+  goalieWorkload(A) {
+    section("Goalie workload");
+    ok(A.seasonMonth(0) === "Oct", "day zero is opening night in October");
+    let lastIdx = -1, monotone = true;
+    for (let d = 0; d < 200; d += 7) {
+      const idx = A.SEASON_MONTHS.indexOf(A.seasonMonth(d));
+      if (idx < lastIdx) monotone = false;
+      lastIdx = idx;
+    }
+    ok(monotone, "the month index never runs backwards as the day increases");
+
+    const G = A.newGame(0, { seed: 151, rules: { seasonLen: 82 } });
+    simSeason(A, G);
+    const starter = A.rosterOf(G, G.userTeam).filter((p) => p.pos === "G")
+      .sort((a, b) => b.season.gp - a.season.gp)[0];
+    ok(!!starter, "the user's club has a goalie to check");
+    const log = G.gameLog[starter.id] || [];
+    ok(log.length === starter.season.gp, `his game log matches his season (${log.length} vs ${starter.season.gp})`);
+
+    const months = A.goalieMonthSplit(log);
+    const monthGp = months.reduce((s, m) => s + m.gp, 0);
+    ok(monthGp === log.length, `every logged start lands in exactly one month (${monthGp} of ${log.length})`);
+    ok(months.length >= 3, `an 82-game season spreads across several months (${months.length})`);
+    const badToi = months.find((m) => m.toi <= 0);
+    ok(!badToi, "every month carries real ice time, not a zero stub");
+
+    const rest = A.goalieRestSplit(log);
+    const starts = log.filter((r) => r.sa > 0);
+    const restGp = Object.values(rest).reduce((s, b) => s + b.gp, 0);
+    ok(restGp === starts.length, `every real start lands in exactly one rest bucket (${restGp} of ${starts.length})`);
+    ok(rest[0].gp + rest[1].gp + rest[2].gp + rest["3+"].gp === restGp, "the four buckets are exhaustive");
+    // A goalie who starts most nights should show up in the back-to-back
+    // bucket at some point across a full season.
+    ok(rest[0].gp > 0, `the starter drew at least one back-to-back (${rest[0].gp})`);
+  },
+
   // The per-zone shot breakdown has to add back up to the totals, from both
   // sides of the puck.
   zones(A) {
     section("Shot breakdown by zone");
     const G = A.newGame(0, { seed: 161, rules: { seasonLen: 41 } });
     simSeason(A, G);
-    const Z = ["rush", "cycle", "point"];
+    const Z = A.ZONE_KEYS; // rush, cycleL, cycleR, point
     const skaters = A.playersOf(G).filter((p) => p.pos !== "G" && p.season.sog > 0);
     const badS = skaters.filter((p) => {
       const zs = Z.reduce((s, k) => s + p.season.z[k].s, 0);
@@ -710,14 +843,24 @@ const CHECKS = {
       `shooters and goalies agree zone by zone (${sSum.join("/")})`);
     const total = sSum.reduce((a, b) => a + b, 0);
     ok(sSum.every((n) => n / total > 0.1), `every zone gets real volume (${sSum.map((n) => (n / total * 100).toFixed(0) + "%").join(" ")})`);
-    // And the danger ordering has to hold: rush beats cycle beats point.
-    const pct = Z.map((k) => {
-      const s = skaters.reduce((a, p) => a + p.season.z[k].s, 0);
-      const g = skaters.reduce((a, p) => a + p.season.z[k].g, 0);
+    // And the danger ordering has to hold: rush beats cycle beats point, with
+    // the two cycle walls combined back into one figure for the comparison.
+    const rateOf = (keys) => {
+      const s = skaters.reduce((a, p) => a + keys.reduce((x, k) => x + p.season.z[k].s, 0), 0);
+      const g = skaters.reduce((a, p) => a + keys.reduce((x, k) => x + p.season.z[k].g, 0), 0);
       return g / s;
-    });
+    };
+    const pct = [rateOf(["rush"]), rateOf(["cycleL", "cycleR"]), rateOf(["point"])];
     ok(pct[0] > pct[1] && pct[1] > pct[2],
       `rush > cycle > point on conversion (${pct.map((x) => (x * 100).toFixed(1)).join(" / ")}%)`);
+
+    // The cycle used to be one number mirrored into two identical boxes on
+    // screen; the walls are independent draws now, so over a full season
+    // they should both carry real volume and not land on the same count.
+    const cycL = skaters.reduce((s, p) => s + p.season.z.cycleL.s, 0);
+    const cycR = skaters.reduce((s, p) => s + p.season.z.cycleR.s, 0);
+    ok(cycL > 0 && cycR > 0, `both cycle walls carry real volume (${cycL} left / ${cycR} right)`);
+    ok(cycL !== cycR, `the two walls are independent draws, not a mirrored copy (${cycL} vs ${cycR})`);
   },
 
   // Where the puck ended up: on goal, wide, or blocked — and whereabouts in the
@@ -1128,7 +1271,8 @@ const CHECKS = {
     simSeason(A, G);
     const Z = A.ZONE_KEYS;
     const prof = G.teams.map((t) => {
-      const f = { rush: 0, cycle: 0, point: 0 }, a = { rush: 0, cycle: 0, point: 0 };
+      const f = {}, a = {};
+      Z.forEach((k) => { f[k] = 0; a[k] = 0; });
       A.rosterOf(G, t.id, true).forEach((p) => {
         if (!p.season.z) return;
         if (p.pos === "G") Z.forEach((k) => { a[k] += p.season.z[k].sa; });
@@ -3921,6 +4065,86 @@ const CHECKS = {
     ok(owner.owner === help.teamId, "and he's been paid his pick");
   },
 
+  /* A real three-way: players and picks going in all three directions, not a
+     two-club trade with a cap dump bolted on. */
+  threeWay(A) {
+    section("Three clubs, not two");
+    const G = A.newGame(0, { seed: 913, rules: { seasonLen: 41 } });
+    const user = G.userTeam;
+    const teamB = (user + 1) % 32;
+    const teamC = (user + 2) % 32;
+    // tradeValue, not ovr — a low-rated prospect can be worth more than a
+    // mediocre veteran once his ceiling counts, so sort on the real number.
+    const sorted = (tid) => A.rosterOf(G, tid, true).filter((p) => !A.hasNtc(p))
+      .sort((a, b) => A.tradeValue(G, b) - A.tradeValue(G, a));
+    const rU = sorted(user), rB = sorted(teamB), rC = sorted(teamC);
+    const x = rU[0], y = rB[Math.floor(rB.length / 2)], z = rC[rC.length - 1];
+    ok(A.tradeValue(G, x) >= A.tradeValue(G, y) && A.tradeValue(G, y) >= A.tradeValue(G, z),
+      "picked a cycle that only gets cheaper (the user asks for nothing back)");
+
+    const fair = [
+      { from: user, to: teamB, players: [x.id], picks: [] },
+      { from: teamB, to: teamC, players: [y.id], picks: [] },
+      { from: teamC, to: user, players: [z.id], picks: [] },
+    ];
+    const twoClub = [
+      { from: user, to: teamB, players: [x.id], picks: [] },
+      { from: teamB, to: user, players: [y.id], picks: [] },
+    ];
+    ok(!A.evalTrade3(G, []).ok, "an empty deal is refused");
+    ok(!A.evalTrade3(G, twoClub).ok, "two legs touching only two clubs is refused");
+    ok(/three clubs/.test(A.evalTrade3(G, twoClub).why), "...and says why");
+    ok(!A.evalTrade3(G, [{ from: user, to: user, players: [], picks: [] }]).ok, "a club can't trade with itself");
+
+    const ev = A.evalTrade3(G, fair);
+    ok(ev.ok, `each club comes away ahead, so it goes through (${ev.why})`);
+
+    section("It can still say no");
+    const unfair = [
+      { from: user, to: teamB, players: [z.id], picks: [] },
+      { from: teamB, to: teamC, players: [x.id], picks: [] },
+      { from: teamC, to: user, players: [y.id], picks: [] },
+    ];
+    ok(!A.evalTrade3(G, unfair).ok, "a club asked to give up more than it gets says no");
+    const bogus = [{ from: user, to: teamB, players: [z.id], picks: [] }, fair[1], fair[2]];
+    ok(!A.evalTrade3(G, bogus).ok, "a player not on that roster is refused");
+    const ntc = A.playersOf(G).find((p) => p.teamId === teamB && A.hasNtc(p));
+    if (ntc) {
+      const blocked = [{ from: teamB, to: teamC, players: [ntc.id], picks: [] },
+        { from: teamC, to: user, players: [z.id], picks: [] }, { from: user, to: teamB, players: [x.id], picks: [] }];
+      ok(!A.evalTrade3(G, blocked).ok, "a no-trade clause stops it in a three-way too");
+    }
+
+    section("Doing it");
+    const r = A.doTrade3(G, fair);
+    ok(r.ok, `the real thing goes through (${r.why || "done"})`);
+    ok(G.players[x.id].teamId === teamB, "the user's piece lands on B");
+    ok(G.players[y.id].teamId === teamC, "B's piece lands on C");
+    ok(G.players[z.id].teamId === user, "and C's piece comes back to the user");
+    // The AI sides stay invalidated until next used; the user's own gets
+    // rebuilt immediately so `lineupChangeNote` can report what moved.
+    ok(G.teams[teamB].lines === null && G.teams[teamC].lines === null,
+      "the two AI lineups are invalidated");
+    ok(G.teams[user].lines != null, "and the user's own is rebuilt right away, to report the reshuffle");
+    ok(G.news[0].text.includes("Three-way"), "and it says so in the news");
+
+    section("Picks move too");
+    const G2 = A.newGame(0, { seed: 913, rules: { seasonLen: 41 } });
+    const pk1 = A.tradablePicks(G2, G2.userTeam)[0];
+    const pk2 = A.tradablePicks(G2, G2.userTeam)[1];
+    const give = [
+      { from: G2.userTeam, to: teamB, players: [], picks: pk1 ? [pk1] : [] },
+      { from: G2.userTeam, to: teamC, players: [], picks: pk2 ? [pk2] : [] },
+    ];
+    if (pk1 && pk2) {
+      const r2 = A.doTrade3(G2, give);
+      ok(r2.ok, "a club can send picks to both of the other two in one deal");
+      const own1 = G2.picks.find((p) => p.year === pk1.year && p.round === pk1.round && p.orig === pk1.orig);
+      const own2 = G2.picks.find((p) => p.year === pk2.year && p.round === pk2.round && p.orig === pk2.orig);
+      ok(own1.owner === teamB && own2.owner === teamC, "each pick lands with the club it was sent to");
+    }
+  },
+
   /* The two contract shapes that cost a club something other than money. */
   bonuses(A) {
     section("Guaranteed money");
@@ -5281,6 +5505,60 @@ const CHECKS = {
     simSeason(A, R); simPlayoffs(A, R);
     ok(R.teams.every((t) => t.gp === 82), "and it plays another full season");
     ok(!R.teams.some((t) => A.capHit(R, t.id) > A.rules(R).capAmount), "still under the cap at the end of it");
+  },
+
+  /* One page per completed year — the table, the leaders, the awards, and how
+     far the user's own club got. Pure reads off `G.history`, so a season long
+     since rolled over still has a complete page. */
+  seasonSummary(A) {
+    section("Season summary");
+    const G = A.newGame(0, { seed: 8181, rules: { seasonLen: 41 } });
+    for (let i = 0; i < 3; i++) {
+      simSeason(A, G); simPlayoffs(A, G); A.autoDraft(G, false); A.startNextSeason(G);
+    }
+    ok(G.history.every((h) => h.rounds != null && h.rounds >= 0 && h.rounds <= 4),
+      "every season recorded how far the user's club got (0-4)");
+    ok(G.history.every((h) => h.rounds !== 4 || h.champion === G.userTeam),
+      "reaching 4 only happens by winning the Cup");
+    ok(G.history.some((h) => h.champion === G.userTeam) === G.history.some((h) => h.rounds === 4),
+      "and winning the Cup is exactly what sets it to 4");
+
+    G.history.forEach((h) => {
+      const d = A.seasonSummaryData(G, h);
+      ok(d.table.length === G.teams.length, `the table has every club (${d.table.length})`);
+      ok(d.table.every((row, i) => i === 0 || row.pts <= d.table[i - 1].pts),
+        "sorted by points, best first");
+      ok(d.userRecord === h.userRecord, "the user's own record passes through unchanged");
+      const label = A.achievementLabel(d.rounds);
+      ok(typeof label === "string" && label.length, `and a human label for it (${label})`);
+    });
+
+    const y0 = G.history[0];
+    const d0 = A.seasonSummaryData(G, y0);
+    ok(d0.leaders.length === Object.keys(y0.leaders || {}).length,
+      "every recorded leader made the page");
+    ok(d0.leaders.every((l) => l.v > 0 && l.name), "with a real total and a name");
+    const awardKeys = y0.awards ? Object.keys(y0.awards).filter((k) => k !== "year" && k !== "votes" && y0.awards[k] != null) : [];
+    ok(d0.awards.length === awardKeys.length, "every handed-out award made the page too");
+
+    // A pruned winner says so on the page rather than crashing it.
+    if (y0.awards && y0.awards.mvp != null) {
+      const g2 = A.migrate(JSON.parse(JSON.stringify(G)));
+      delete g2.players[y0.awards.mvp];
+      const d2 = A.seasonSummaryData(g2, g2.history[0]);
+      const mvpRow = d2.awards.find((a) => a.key === "mvp");
+      ok(mvpRow && mvpRow.name.includes("no longer"), "a pruned award winner doesn't crash the page");
+    }
+
+    const text = A.seasonSummaryText(G, y0);
+    ok(text.includes(String(y0.year)), "the text export names the year");
+    ok(text.includes("STANDINGS") && text.includes("LEAGUE LEADERS") && text.includes("AWARDS"),
+      "and has all three sections");
+    ok(text.split("\n").length > 10, "it's a real page, not one line");
+
+    ok(A.achievementLabel(null) == null, "no recorded result is no label");
+    ok(A.achievementLabel(0) === "Missed the playoffs" && A.achievementLabel(4) === "Won the Cup",
+      "the two ends of the scale read right");
   },
 
   determinism(A) {

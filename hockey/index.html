@@ -1909,9 +1909,10 @@ function genPlayer(G, pos, tier, age) {
 }
 
 /* Where a player's shots come from, and how many of them go in. Skaters record
-   shots/goals per zone, goalies record shots faced/saved — the same three
-   buckets from both sides of the puck. */
-const ZONE_KEYS = ["rush", "cycle", "point"];
+   shots/goals per zone, goalies record shots faced/saved — the same four
+   buckets from both sides of the puck (the cycle's two walls count separately,
+   see SHOT_ZONES). */
+const ZONE_KEYS = ["rush", "cycleL", "cycleR", "point"];
 function blankZones(pos) {
   const z = {};
   ZONE_KEYS.forEach((k) => { z[k] = pos === "G" ? { sa: 0, sv: 0 } : { s: 0, g: 0 }; });
@@ -2417,6 +2418,7 @@ function dressRank(G, teamId) {
   return (p) => p.ovr + kids * clamp(24 - p.age, -4, 5) * 0.8;
 }
 function autoLines(G, teamId) {
+  const t = G.teams[teamId];
   const rank = dressRank(G, teamId);
   const r = activeRoster(G, teamId).slice().sort((a, b) => rank(b) - rank(a));
   const byPos = (pos) => r.filter((p) => p.pos === pos);
@@ -2456,16 +2458,37 @@ function autoLines(G, teamId) {
     return pick || null;
   };
   const spare = r.filter((p) => p.pos !== "G" && p.pos !== "D");
+  /* A line or pair the roster change didn't touch keeps the men it had, so
+     lineChemistry/pairChemistry see the same signature and the streak
+     survives — without this, ANY invalidation (one call-up, one injury
+     anywhere on the roster) rebuilt all four lines and all three pairs from
+     the depth chart, so a settled shutdown pair lost its whole streak over
+     an unrelated forward getting hurt. */
+  const byId = new Map(r.map((p) => [p.id, p]));
+  const prevF = (t.lastLines && t.lastLines.F) || [];
+  const prevD = (t.lastLines && t.lastLines.D) || [];
+  const keepRow = (prev) => prev && prev.length && prev.every((id) => id != null && byId.has(id) && !used.has(id))
+    ? prev.map((id) => byId.get(id)) : null;
+  /* Reserve every kept row BEFORE filling any of the unpreserved ones — done
+     in one pass, filling line 0 first could hand a rebuilt line the exact
+     player line 2 was about to keep, since he'd still be sitting unclaimed
+     in the position pool. */
+  const keptF = [0, 1, 2, 3].map((i) => keepRow(prevF[i]));
+  keptF.forEach((kept) => kept && kept.forEach((p) => used.add(p.id)));
+  const keptD = [0, 1, 2].map((i) => keepRow(prevD[i]));
+  keptD.forEach((kept) => kept && kept.forEach((p) => used.add(p.id)));
   /* Down the lines rather than across them, so a shortage costs the FOURTH
      line its winger rather than the first — which is also how a coach does it. */
   const F = [[null, null, null], [null, null, null], [null, null, null], [null, null, null]];
   [0, 1, 2, 3].forEach((i) => {
+    if (keptF[i]) { F[i] = keptF[i]; return; }
     F[i][0] = grab(lws, spare); F[i][1] = grab(cs, spare); F[i][2] = grab(rws, spare);
   });
-  const D = [0, 1, 2].map(() => [grab(ds), grab(ds)]);
+  const D = [0, 1, 2].map((i) => keptD[i] || [grab(ds), grab(ds)]);
   const idsOf = (row) => row.map((p) => (p ? p.id : null));
   const Fids = F.map(idsOf), Dids = D.map(idsOf);
   const Gk = [gs[0] ? gs[0].id : null, gs[1] ? gs[1].id : null];
+  t.lastLines = { F: Fids, D: Dids };
   /* Special teams come out of the men who are actually in the lineup. Drawing
      them from the whole dressed roster put a defensively-minded spare on the
      penalty kill and on no line at all, so he finished the year averaging
@@ -2488,6 +2511,25 @@ function ensureLines(G, teamId) {
   return t.lines;
 }
 
+/* autoLines keeps what it doesn't have to change (see above), but the news
+   feed for an injury or a call-up never said so — the reader had to compare
+   `t.lastLines` before and after by eye to see whether the whole forward
+   corps got shuffled or just one line lost a man. Snapshot the assignment
+   before the roster change, force the rebuild, and diff the two: no rnd(G)
+   calls happen in that rebuild, so forcing it early changes nothing else. */
+function lineupChangeNote(G, teamId, prevLines) {
+  if (!prevLines) return "";
+  const t = G.teams[teamId];
+  ensureLines(G, teamId);
+  const now = t.lastLines || { F: [], D: [] };
+  const rowEq = (a, b) => !!a && !!b && a.length === b.length && a.every((id, i) => id === b[i]);
+  const diffRows = (rows, prows, label) => (rows || [])
+    .map((row, i) => (rowEq(row, (prows || [])[i]) ? null : `${label} ${i + 1}`))
+    .filter(Boolean);
+  const changed = diffRows(now.F, prevLines.F, "Line").concat(diffRows(now.D, prevLines.D, "Pair"));
+  return changed.length ? ` ${changed.join(", ")} reshuffled.` : "";
+}
+
 const LINE_CHEM_MAX_GAMES = 10;    // games together before the chemistry bonus caps out
 const LINE_CHEM_PER_GAME = 0.006;  // lineOff multiplier per game of continuity
 const PAIR_CHEM_MAX_GAMES = 10;    // games together before a D pair's chemistry bonus caps out
@@ -2496,13 +2538,20 @@ const PAIR_CHEM_PER_GAME = 0.006;  // unitDef multiplier per game of continuity
 /* Rewards keeping a forward line intact from game to game: each consecutive
    game together nudges its offence up, capped at LINE_CHEM_MAX_GAMES, so
    shuffling the lines every week has a real cost. Called once per side per
-   game, which both reads the current streak and advances it for next time. */
+   game, which both reads the current streak and advances it for next time.
+   A trio is matched against EVERY stored signature, not just its own slot's
+   — `moveLine` (LinesTab) swaps two whole rows wholesale, so the same three
+   players can land in a different slot with a streak that belongs to them,
+   not to the slot. Matching by slot only would reset it to zero, exactly as
+   if the line had been broken up. */
 function lineChemistry(t, lines) {
   if (!t.lineChem) t.lineChem = [0, 0, 0, 0];
   if (!t.lineSig) t.lineSig = [null, null, null, null];
+  const prevSig = t.lineSig.slice(), prevChem = t.lineChem.slice();
   return lines.F.map((ln, li) => {
     const sig = ln.join(",");
-    const games = t.lineSig[li] === sig ? Math.min(LINE_CHEM_MAX_GAMES, t.lineChem[li] + 1) : 0;
+    const from = prevSig.indexOf(sig);
+    const games = from === -1 ? 0 : Math.min(LINE_CHEM_MAX_GAMES, prevChem[from] + 1);
     t.lineChem[li] = games;
     t.lineSig[li] = sig;
     return games;
@@ -2511,17 +2560,31 @@ function lineChemistry(t, lines) {
 
 /* Same idea as lineChemistry but for defence pairs: unitDef weights a settled
    pair the same way lineOff weights a settled forward line. Called once per
-   side per game alongside lineChemistry. */
+   side per game alongside lineChemistry. Matches against every stored
+   signature for the same reason lineChemistry does. */
 function pairChemistry(t, lines) {
   if (!t.pairChem) t.pairChem = [0, 0, 0];
   if (!t.pairSig) t.pairSig = [null, null, null];
+  const prevSig = t.pairSig.slice(), prevChem = t.pairChem.slice();
   return lines.D.map((pr, pi) => {
     const sig = pr.join(",");
-    const games = t.pairSig[pi] === sig ? Math.min(PAIR_CHEM_MAX_GAMES, t.pairChem[pi] + 1) : 0;
+    const from = prevSig.indexOf(sig);
+    const games = from === -1 ? 0 : Math.min(PAIR_CHEM_MAX_GAMES, prevChem[from] + 1);
     t.pairChem[pi] = games;
     t.pairSig[pi] = sig;
     return games;
   });
+}
+
+/* Turns a game's `res.chem` entry (the F/D streaks simGame read for that
+   game) into the box-score note naming which units carried a full bonus —
+   the same "Line N"/"Pair N" labels lineupChangeNote uses. */
+function jelledNote(chem) {
+  if (!chem) return "";
+  const names = (chem.F || []).map((g, i) => (g >= LINE_CHEM_MAX_GAMES ? `Line ${i + 1}` : null))
+    .concat((chem.D || []).map((g, i) => (g >= PAIR_CHEM_MAX_GAMES ? `Pair ${i + 1}` : null)))
+    .filter(Boolean);
+  return names.length ? `${names.join(", ")} fully jelled` : "";
 }
 
 /* Offensive and defensive strength of a unit, on a ~0.7–1.4 scale. */
@@ -2874,6 +2937,16 @@ function migrate(G) {
     [p.season].forEach((s) => {
       if (!s) return;
       if (!s.z) s.z = blankZones(kind);
+      else if (s.z.cycle && !s.z.cycleL) {
+        // The cycle zone split into two walls; an in-progress save keeps its
+        // totals exactly by dividing the old bucket's counts between them.
+        const c = s.z.cycle, half = {};
+        Object.keys(c).forEach((f) => { half[f] = Math.floor(c[f] / 2); });
+        s.z.cycleL = half;
+        s.z.cycleR = {};
+        Object.keys(c).forEach((f) => { s.z.cycleR[f] = c[f] - half[f]; });
+        delete s.z.cycle;
+      }
       if (!s.net) s.net = blankNet(kind);
       if (kind === "S") {
         // Older saves predate attempt tracking; seed it from shots on goal so
@@ -3009,10 +3082,15 @@ function emptyBox(G, teamId) {
 /* Not every shot is the same shot. A point blast from a defenceman and a rush
    chance off the wing arrive at the goalie with very different odds, so the zone
    is picked first and it decides both who shoots and how stoppable it is. */
+/* The cycle used to be one bucket split down the middle for display only, so
+   the two walls always showed the same number — a small lie. They're two real
+   zones now, each half the old share, with identical odds: which wall a cycle
+   chance comes from isn't a skill, it's just which corner the puck ends up in. */
 const SHOT_ZONES = [
-  { key: "rush",  p: 0.22, save: -0.034, dBias: 0.22 },
-  { key: "cycle", p: 0.52, save:  0.000, dBias: 0.50 },
-  { key: "point", p: 0.26, save:  0.055, dBias: 3.40 },
+  { key: "rush",   p: 0.22, save: -0.034, dBias: 0.22 },
+  { key: "cycleL", p: 0.26, save:  0.000, dBias: 0.50 },
+  { key: "cycleR", p: 0.26, save:  0.000, dBias: 0.50 },
+  { key: "point",  p: 0.26, save:  0.055, dBias: 3.40 },
 ];
 /* Which zone a chance comes from is NOT a league constant — it's an argument
    between the two units on the ice, and it's the reason one club's shot map
@@ -3042,9 +3120,12 @@ function pickZone(G, offIds, defIds) {
       // cycle: hanging onto it down low. NOT a leftover — if this isn't
       // modulated it pins the middle of every club's chart to ~50% and the
       // three zones never change rank, which is what made every map look alike.
-      w[1] *= clamp(1 + (hands - 55) * 0.008 - (oppPhy - 55) * 0.006, 0.55, 1.6);
+      // Both walls get the same multiplier — which wall isn't a skill — so the
+      // combined cycle share moves exactly as it always did.
+      const cycleMult = clamp(1 + (hands - 55) * 0.008 - (oppPhy - 55) * 0.006, 0.55, 1.6);
+      w[1] *= cycleMult; w[2] *= cycleMult;
       // point: our defencemen's shot, and a defence that forces us outside
-      w[2] *= clamp(1 + (dShot - 45) * 0.024 + (oppDfn - 55) * 0.019, 0.35, 2.4);
+      w[3] *= clamp(1 + (dShot - 45) * 0.024 + (oppDfn - 55) * 0.019, 0.35, 2.4);
     }
   }
   const tot = w.reduce((a, b) => a + b, 0);
@@ -3547,6 +3628,12 @@ function simGame(G, homeId, awayId, opts) {
     boxes: { [homeId]: home, [awayId]: away },
     events: ev ? ev.sort((a, b) => a.t - b.t) : null,
     shots: shotLog,
+    // Chemistry as it stood for this game, so a box score can say which lines
+    // were fully jelled rather than only the current Lines tab.
+    chem: {
+      [homeId]: { F: teamChemF[homeId], D: teamChemD[homeId] },
+      [awayId]: { F: teamChemF[awayId], D: teamChemD[awayId] },
+    },
   };
   return res;
 }
@@ -3784,8 +3871,12 @@ function rollInjuries(G, res) {
         p.rustKey = hurts;
         p.injGames = p.inj;
         p.rust = 0; p.rustFrom = 0;
-        if (tid === G.userTeam) news(G, `${fullName(p)} is out ~${p.inj} games (${desc}).`, "bad");
+        const prevLines = G.teams[tid].lastLines;
         G.teams[tid].lines = null;
+        if (tid === G.userTeam) {
+          const note = lineupChangeNote(G, tid, prevLines);
+          news(G, `${fullName(p)} is out ~${p.inj} games (${desc}).${note}`, "bad");
+        }
       }
     });
   });
@@ -3816,7 +3907,7 @@ function simDay(G) {
     // Only the latest of the user's games is kept — a full season of play-by-play
     // would dwarf everything else in the save.
     if (mine) G.lastGame = { day: G.day, home: fx.home, away: fx.away, hg: res.hg, ag: res.ag,
-      ot: res.ot, so: res.so, events: res.events || [], boxes: res.boxes };
+      ot: res.ot, so: res.so, events: res.events || [], boxes: res.boxes, chem: res.chem };
   });
   playedToday.forEach((tid) => { G.lastPlayed[tid] = G.day; });
   // The gate. Only the home side takes one, which is what makes a home date
@@ -4074,7 +4165,7 @@ function simSeriesGame(G, s) {
   applyGame(G, res, { playoff: true });
   if (mine) {
     G.lastGame = { day: G.day, home, away, hg: res.hg, ag: res.ag,
-      ot: res.ot, so: res.so, playoff: true, events: res.events || [], boxes: res.boxes };
+      ot: res.ot, so: res.so, playoff: true, events: res.events || [], boxes: res.boxes, chem: res.chem };
   }
   const hiWon = (res.hg > res.ag) === homeIsHi;
   s.w[hiWon ? 0 : 1]++;
@@ -4757,6 +4848,10 @@ function finishSeason(G) {
   // Before `p.season` is blanked further down — that line IS the bonus test.
   settleBonuses(G);
   const champ = G.playoffs && G.playoffs.champion;
+  // Computed here, before the bracket is nulled further down the rollover, so
+  // it can go on the history row AND feed the board reaction below — one read
+  // of the bracket, not two.
+  const got = seasonAchievement(G);
   G.history.push({
     year: G.year,
     champion: champ,
@@ -4765,6 +4860,9 @@ function finishSeason(G) {
     // Captured here because `p.season` is blanked further down the rollover.
     leaders: seasonLeaders(G),
     userRecord: { w: G.teams[G.userTeam].w, l: G.teams[G.userTeam].l, otl: G.teams[G.userTeam].otl, pts: G.teams[G.userTeam].pts },
+    // How far YOUR club got that year (0 missed it, 4 won the Cup) — the one
+    // thing `seasonSummaryData` can't reconstruct once the bracket is gone.
+    rounds: got,
   });
   // Board reaction: making the playoffs is the baseline expectation.
   const me = G.teams[G.userTeam];
@@ -4772,7 +4870,6 @@ function finishSeason(G) {
   // Judged against what the board actually asked for at the start of the year,
   // not against a flat "did you make the playoffs".
   const want = (G.mandate && G.mandate.need) || 1;
-  const got = seasonAchievement(G);
   /* The board used to be unreasonable. `(got - want) * 9` is linear and blind:
      a club told to win the Cup that instead made the playoffs lost 27
      confidence — a good season, punished as hard as a collapse — and from a
@@ -5981,8 +6078,14 @@ function doTrade(G, aId, aPlayers, aPicks, bId, bPlayers, bPicks, opts) {
   bPlayers.forEach((id) => { bank(G.players[id], bId); G.players[id].teamId = aId; G.players[id].farm = false; });
   aPicks.forEach((pk) => { const r = G.picks.find((x) => x.year === pk.year && x.round === pk.round && x.orig === pk.orig); if (r) r.owner = bId; });
   bPicks.forEach((pk) => { const r = G.picks.find((x) => x.year === pk.year && x.round === pk.round && x.orig === pk.orig); if (r) r.owner = aId; });
+  /* Both sides can lose a jelled line or pair in a trade, but only the user's
+     own club is worth telling — an AI club's reshuffle is invisible to him
+     either way, same as an injury or a call-up. */
+  const prevA = G.teams[aId].lastLines, prevB = G.teams[bId].lastLines;
   G.teams[aId].lines = null; G.teams[bId].lines = null;
-  news(G, `Trade with ${G.teams[bId].name}: out ${aPlayers.length} / in ${bPlayers.length}.`, "info");
+  const note = (aId === G.userTeam ? lineupChangeNote(G, aId, prevA) : "")
+    + (bId === G.userTeam ? lineupChangeNote(G, bId, prevB) : "");
+  news(G, `Trade with ${G.teams[bId].name}: out ${aPlayers.length} / in ${bPlayers.length}.${note}`, "info");
   return ev;
 }
 
@@ -6085,6 +6188,88 @@ function brokerTrade(G, aId, aPlayers, aPicks, bId, bPlayers, bPicks, broker, op
   G.teams[cId].lines = null;
   news(G, `${G.teams[cId].name} brokered it — $${amt}M of ${fullName(p)}'s deal stays with them.`, "info");
   return { ...done, broker: { teamId: cId, amt, fee: round1(fee), paid: round1(paidVal) } };
+}
+
+/* -------------------------------- the third seat ---------------------------
+ * `brokerTrade` only ever adds a cap-space dump for a fee — it's still a deal
+ * between two clubs, with a third paid to make it fit. A real three-way trade
+ * is different: three clubs each sending pieces to whichever of the other two
+ * actually wants them, which is where the interesting hockey deals live — the
+ * asset that only fixes club C's cap for a pick from club A, so club B can get
+ * the player it actually wants out of club A in return.
+ *
+ * `moves` is a flat list of directed transfers, `{from, to, players, picks}`,
+ * spanning exactly three teams. Evaluation reuses `tradeValue`/`pickValue`
+ * exactly as the two-club trade does — every club must come away with at
+ * least as much as it sent, with the user's usual `askPrice` premium applied
+ * to every AI club in the deal, since he's still the one asking. No retained
+ * salary here: that's what `brokerTrade` is for, and stacking both at once is
+ * more machinery than a three-way trade needs to prove the idea.
+ * ------------------------------------------------------------------------- */
+function evalTrade3(G, moves, opts) {
+  opts = opts || {};
+  if (!tradesOpen(G)) return { ok: false, why: G.phase === "playoffs" ? "the roster is frozen for the playoffs" : "the trade deadline has passed" };
+  moves = (moves || []).filter((m) => (m.players && m.players.length) || (m.picks && m.picks.length));
+  if (!moves.length) return { ok: false, why: "nothing in it" };
+  if (moves.some((m) => m.from === m.to)) return { ok: false, why: "a club can't trade with itself" };
+  const teams = [...new Set(moves.flatMap((m) => [m.from, m.to]))];
+  if (teams.length !== 3) return { ok: false, why: "a three-way trade needs exactly three clubs" };
+
+  for (const m of moves) {
+    for (const pid of m.players || []) {
+      const p = G.players[pid];
+      if (!p || p.teamId !== m.from) return { ok: false, why: "a player isn't on that roster" };
+      if (hasNtc(p)) return { ok: false, why: `${fullName(p)} has a no-trade clause` };
+    }
+  }
+
+  const sent = {}, received = {}, outIds = {}, inIds = {};
+  teams.forEach((t) => { sent[t] = 0; received[t] = 0; outIds[t] = []; inIds[t] = []; });
+  moves.forEach((m) => {
+    const pVal = (m.players || []).reduce((s, pid) => s + tradeValue(G, G.players[pid]), 0);
+    const kVal = (m.picks || []).reduce((s, pk) => s + pickValue(G, pk), 0);
+    sent[m.from] += pVal + kVal;
+    received[m.to] += pVal + kVal;
+    outIds[m.from] = outIds[m.from].concat(m.players || []);
+    inIds[m.to] = inIds[m.to].concat(m.players || []);
+  });
+
+  const R = rules(G);
+  for (const t of teams) {
+    const salOut = outIds[t].reduce((s, pid) => s + effectiveCap(G, G.players[pid]), 0);
+    const salIn = inIds[t].reduce((s, pid) => s + effectiveCap(G, G.players[pid]), 0);
+    if (R.hardCap && capHit(G, t) - salOut + salIn > R.capAmount)
+      return { ok: false, why: `${G.teams[t].abbr} would be over the cap` };
+    const size = rosterOf(G, t, true).length - outIds[t].length + inIds[t].length;
+    if (size > ROSTER_MAX + FARM_MAX) return { ok: false, why: `${G.teams[t].abbr} roster limit` };
+  }
+
+  const margin = diff(G).askPrice;
+  let accepted = true, loser = null;
+  teams.forEach((t) => {
+    const need = t === G.userTeam ? sent[t] : sent[t] * margin;
+    const fine = received[t] >= need * 0.97;
+    if (t !== G.userTeam && !fine) { accepted = false; loser = loser == null ? t : loser; }
+  });
+
+  return { ok: accepted, teams, sent, received,
+    why: accepted ? "accepted" : `${G.teams[loser].abbr} want more back` };
+}
+function doTrade3(G, moves, opts) {
+  const ev = evalTrade3(G, moves, opts);
+  if (!ev.ok) return ev;
+  const prevLines = G.teams[G.userTeam].lastLines;
+  moves.forEach((m) => {
+    (m.players || []).forEach((pid) => { G.players[pid].teamId = m.to; G.players[pid].farm = false; });
+    (m.picks || []).forEach((pk) => {
+      const r = G.picks.find((x) => x.year === pk.year && x.round === pk.round && x.orig === pk.orig);
+      if (r) r.owner = m.to;
+    });
+  });
+  ev.teams.forEach((t) => { G.teams[t].lines = null; });
+  const note = ev.teams.includes(G.userTeam) ? lineupChangeNote(G, G.userTeam, prevLines) : "";
+  news(G, `Three-way trade: ${ev.teams.map((t) => G.teams[t].name).join(" / ")}.${note}`, "info");
+  return ev;
 }
 
 /* -------------------------------- the market -------------------------------
@@ -6302,6 +6487,45 @@ function goalieReport(G, p) {
     // record of what happened, not a claim about what a scout knows.
     hole: goalieHole(p),
   };
+}
+
+/* A goalie's page wants to see workload two ways — over TIME and over REST —
+   and both are already sitting in G.gameLog. Nothing new to track, just two
+   ways to slice what's there.
+
+   There's no stored calendar date anywhere in the save, only a day index into
+   the schedule, but `buildSchedule` already assumes a real NHL calendar under
+   the hood (the All-Star break is cut at 55% of the days because that's
+   "midwinter") — so a day index maps onto an honest month label for display,
+   derived on read and never stored. */
+const SEASON_MONTHS = ["Oct", "Nov", "Dec", "Jan", "Feb", "Mar", "Apr", "May", "Jun"];
+function seasonMonth(day) {
+  return SEASON_MONTHS[clamp(Math.floor(day / 30.44), 0, SEASON_MONTHS.length - 1)];
+}
+function goalieMonthSplit(log) {
+  const out = {};
+  (log || []).forEach((r) => {
+    const m = seasonMonth(r.d);
+    const o = (out[m] = out[m] || { m, gp: 0, toi: 0 });
+    o.gp++; o.toi += r.toi || 0;
+  });
+  return SEASON_MONTHS.filter((m) => out[m]).map((m) => out[m]);
+}
+/* Days of rest before each start, bucketed the same way `restFor` reads a
+   club's rest — 0 is a genuine back-to-back. A goalie's FIRST logged start has
+   no known prior game this season, so — like `restFor`'s own -9 sentinel — it
+   counts as fully rested rather than dragging the back-to-back bucket down
+   with a start that wasn't actually one. */
+function goalieRestSplit(log) {
+  const starts = (log || []).filter((r) => r.sa > 0).slice().sort((a, b) => a.d - b.d);
+  const buckets = { 0: { gp: 0, sv: 0, sa: 0 }, 1: { gp: 0, sv: 0, sa: 0 },
+    2: { gp: 0, sv: 0, sa: 0 }, "3+": { gp: 0, sv: 0, sa: 0 } };
+  starts.forEach((r, i) => {
+    const rest = i === 0 ? 3 : Math.max(0, r.d - starts[i - 1].d - 1);
+    const b = buckets[rest >= 3 ? "3+" : rest];
+    b.gp++; b.sv += r.sv; b.sa += r.sa;
+  });
+  return buckets;
 }
 
 function setBlock(G, pid, on) {
@@ -6921,8 +7145,13 @@ function recall(G, pid) {
   const p = G.players[pid];
   if (!p || !p.farm) return { ok: false, why: "not on the farm" };
   if (rosterOf(G, p.teamId).length >= ROSTER_MAX) return { ok: false, why: "NHL roster is full" };
+  const prevLines = G.teams[p.teamId].lastLines;
   p.farm = false;
   G.teams[p.teamId].lines = null;
+  if (p.teamId === G.userTeam) {
+    const note = lineupChangeNote(G, p.teamId, prevLines);
+    news(G, `${fullName(p)} called up from the farm.${note}`, "good");
+  }
   return { ok: true };
 }
 // Anyone placed before today gets picked over, worst club first.
@@ -8085,7 +8314,7 @@ function SortTable({ cols, rows, initial, asc, rowKey, rowCls, onRow, min, empty
   );
 }
 
-function Modal({ title, onClose, children, wide }) {
+function Modal({ title, onClose, children, wide, actions }) {
   useEffect(() => {
     const k = (e) => { if (e.key === "Escape") onClose(); };
     document.addEventListener("keydown", k);
@@ -8098,7 +8327,10 @@ function Modal({ title, onClose, children, wide }) {
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between gap-3 mb-3">
           <div className="font-semibold">{title}</div>
-          <button className={btnGhost} onClick={onClose}>Close</button>
+          <div className="flex items-center gap-2">
+            {actions}
+            <button className={btnGhost} onClick={onClose}>Close</button>
+          </div>
         </div>
         {children}
       </div>
@@ -8114,57 +8346,63 @@ function Modal({ title, onClose, children, wide }) {
  * ------------------------------------------------------------------------- */
 
 function ShotRink({ z, mode }) {
-  const keys = ZONE_KEYS;
-  const vol = keys.map((k) => (mode === "G" ? z[k].sa : z[k].s));
-  const total = vol.reduce((a, b) => a + b, 0);
-  const pct = keys.map((k, i) => {
-    if (mode === "G") return z[k].sa ? z[k].sv / z[k].sa : 0;
-    return z[k].s ? z[k].g / z[k].s : 0;
-  });
-  const share = vol.map((v) => (total ? v / total : 0));
-  // Heat runs on volume; the number in the middle is the rate.
-  const fill = (i, hue) => `hsla(${hue}, 78%, 55%, ${0.12 + share[i] * 0.72})`;
   const hue = mode === "G" ? 150 : 205;
-  const label = (i) => (mode === "G"
-    ? `${(pct[i] * 100).toFixed(1)}%`
-    : `${(pct[i] * 100).toFixed(1)}%`);
+  const vol = (k) => (mode === "G" ? z[k].sa : z[k].s);
+  const pct = (k) => (mode === "G"
+    ? (z[k].sa ? z[k].sv / z[k].sa : 0)
+    : (z[k].s ? z[k].g / z[k].s : 0));
+  const total = ZONE_KEYS.reduce((s, k) => s + vol(k), 0);
+  // Heat runs on volume; the number in the middle is the rate.
+  const share = (k) => (total ? vol(k) / total : 0);
+  const fill = (k) => `hsla(${hue}, 78%, 55%, ${0.12 + share(k) * 0.72})`;
+  const label = (k) => `${(pct(k) * 100).toFixed(1)}%`;
 
   if (!total) return <div className="text-sm text-slate-500 px-1 py-3">No shots recorded yet.</div>;
+  // The rink shows each wall's own number — they're independent draws, not a
+  // mirrored copy of each other. The list below combines them back into one
+  // "cycle" row, since that's still the one stat a reader wants to compare
+  // against rush and point.
+  const rows = [
+    { label: "rush", s: z.rush.s, g: z.rush.g, sa: z.rush.sa, sv: z.rush.sv, share: share("rush") },
+    { label: "cycle", s: z.cycleL.s + z.cycleR.s, g: z.cycleL.g + z.cycleR.g,
+      sa: z.cycleL.sa + z.cycleR.sa, sv: z.cycleL.sv + z.cycleR.sv,
+      share: share("cycleL") + share("cycleR") },
+    { label: "point", s: z.point.s, g: z.point.g, sa: z.point.sa, sv: z.point.sv, share: share("point") },
+  ];
   return (
     <div className="space-y-2">
       <svg viewBox="0 0 200 170" className="w-full max-w-xs mx-auto block">
         {/* rink outline: offensive zone, net at the bottom */}
         <rect x="6" y="6" width="188" height="158" rx="26" fill="#0d1728" stroke="#243250" strokeWidth="2" />
         {/* point — the strip inside the blue line */}
-        <path d="M8 34 H192 V64 H8 Z" fill={fill(2, hue)} stroke="#243250" />
-        {/* cycle — the walls and corners */}
-        <path d="M8 64 H62 V150 H8 Z M138 64 H192 V150 H138 Z" fill={fill(1, hue)} stroke="#243250" />
+        <path d="M8 34 H192 V64 H8 Z" fill={fill("point")} stroke="#243250" />
+        {/* cycle — the walls and corners, each its own real count */}
+        <path d="M8 64 H62 V150 H8 Z" fill={fill("cycleL")} stroke="#243250" />
+        <path d="M138 64 H192 V150 H138 Z" fill={fill("cycleR")} stroke="#243250" />
         {/* rush — the slot, straight at the net */}
-        <path d="M62 64 H138 V150 H62 Z" fill={fill(0, hue)} stroke="#243250" />
+        <path d="M62 64 H138 V150 H62 Z" fill={fill("rush")} stroke="#243250" />
         <line x1="8" y1="34" x2="192" y2="34" stroke="#3b82f6" strokeWidth="3" opacity="0.7" />
         <line x1="8" y1="150" x2="192" y2="150" stroke="#ef4444" strokeWidth="2" opacity="0.6" />
         <rect x="84" y="150" width="32" height="9" fill="#1e2b45" stroke="#64748b" />
         <circle cx="100" cy="105" r="21" fill="none" stroke="#243250" />
-        <text x="100" y="52" textAnchor="middle" className="fill-slate-200" fontSize="11" fontWeight="600">{label(2)}</text>
-        <text x="100" y="62" textAnchor="middle" className="fill-slate-400" fontSize="7">POINT · {vol[2]}</text>
-        <text x="35" y="105" textAnchor="middle" className="fill-slate-200" fontSize="11" fontWeight="600">{label(1)}</text>
-        <text x="35" y="115" textAnchor="middle" className="fill-slate-400" fontSize="7">CYCLE · {vol[1]}</text>
-        <text x="165" y="105" textAnchor="middle" className="fill-slate-200" fontSize="11" fontWeight="600">{label(1)}</text>
-        <text x="165" y="115" textAnchor="middle" className="fill-slate-400" fontSize="7">CYCLE</text>
-        <text x="100" y="104" textAnchor="middle" className="fill-slate-100" fontSize="12" fontWeight="700">{label(0)}</text>
-        <text x="100" y="114" textAnchor="middle" className="fill-slate-300" fontSize="7">RUSH · {vol[0]}</text>
+        <text x="100" y="52" textAnchor="middle" className="fill-slate-200" fontSize="11" fontWeight="600">{label("point")}</text>
+        <text x="100" y="62" textAnchor="middle" className="fill-slate-400" fontSize="7">POINT · {vol("point")}</text>
+        <text x="35" y="105" textAnchor="middle" className="fill-slate-200" fontSize="11" fontWeight="600">{label("cycleL")}</text>
+        <text x="35" y="115" textAnchor="middle" className="fill-slate-400" fontSize="7">CYCLE · {vol("cycleL")}</text>
+        <text x="165" y="105" textAnchor="middle" className="fill-slate-200" fontSize="11" fontWeight="600">{label("cycleR")}</text>
+        <text x="165" y="115" textAnchor="middle" className="fill-slate-400" fontSize="7">CYCLE · {vol("cycleR")}</text>
+        <text x="100" y="104" textAnchor="middle" className="fill-slate-100" fontSize="12" fontWeight="700">{label("rush")}</text>
+        <text x="100" y="114" textAnchor="middle" className="fill-slate-300" fontSize="7">RUSH · {vol("rush")}</text>
       </svg>
       <div className="space-y-1">
-        {keys.map((k, i) => (
-          <div key={k} className="flex items-center gap-2 text-xs">
-            <div className="w-12 text-slate-400 capitalize">{k}</div>
+        {rows.map((r) => (
+          <div key={r.label} className="flex items-center gap-2 text-xs">
+            <div className="w-12 text-slate-400 capitalize">{r.label}</div>
             <div className="flex-1 h-2.5 bg-[#0d1728] rounded overflow-hidden border border-[#1e2b45]">
-              <div className="h-full" style={{ width: `${share[i] * 100}%`, background: `hsl(${hue}, 70%, 52%)` }} />
+              <div className="h-full" style={{ width: `${r.share * 100}%`, background: `hsl(${hue}, 70%, 52%)` }} />
             </div>
             <div className="w-28 text-right tnum text-slate-300">
-              {mode === "G"
-                ? `${z[k].sv}/${z[k].sa} saved`
-                : `${z[k].g}G on ${z[k].s}`}
+              {mode === "G" ? `${r.sv}/${r.sa} saved` : `${r.g}G on ${r.s}`}
             </div>
           </div>
         ))}
@@ -8483,6 +8721,57 @@ function FormBars({ log, mode }) {
       </div>
       <div className="text-xs text-slate-500">
         last {recent.length} games · {mode === "G" ? "save percentage" : "points"} · blue is a win
+      </div>
+    </div>
+  );
+}
+
+/* Two views cut from the same G.gameLog: starts by month (has he been
+   overworked lately?) and save percentage by how much rest he got beforehand
+   (is the rest he's getting actually the rest he needs?). Only ever rendered
+   with the user's own goalies — gameLog is a this-club-only log, same as
+   Form above it. */
+function GoalieWorkload({ log }) {
+  const months = goalieMonthSplit(log);
+  const rest = goalieRestSplit(log);
+  const maxGp = Math.max(1, ...months.map((m) => m.gp));
+  const REST_ROWS = [["0", "B2B"], ["1", "1 day"], ["2", "2 days"], ["3+", "3+ days"]];
+  const pctOf = (k) => (rest[k].sa ? rest[k].sv / rest[k].sa : null);
+  const seen = REST_ROWS.map(([k]) => pctOf(k)).filter((v) => v != null);
+  const max = Math.max(...seen, 1);
+  const min = Math.min(...seen.filter((v) => v > 0), 0.8);
+  return (
+    <div className="space-y-3">
+      <div>
+        <div className="flex items-end gap-1.5 h-12">
+          {months.map((m) => (
+            <div key={m.m} className="flex-1 flex flex-col items-center gap-1">
+              <div className="w-full rounded-t bg-sky-600"
+                style={{ height: `${clamp((m.gp / maxGp) * 100, 10, 100)}%` }}
+                title={`${m.m}: ${m.gp} game${m.gp === 1 ? "" : "s"}, ${(m.toi / m.gp).toFixed(0)} min/g`} />
+              <div className="text-[10px] text-slate-500">{m.m}</div>
+            </div>
+          ))}
+        </div>
+        <div className="text-xs text-slate-500 mt-1">starts by month</div>
+      </div>
+      <div className="space-y-1.5">
+        {REST_ROWS.map(([k, label]) => {
+          const v = pctOf(k);
+          const w = v == null ? 0 : clamp(((v - min) / Math.max(0.001, max - min)) * 100, 6, 100);
+          return (
+            <div key={k} className="flex items-center gap-2">
+              <div className="w-14 text-[11px] uppercase text-slate-400">{label}</div>
+              <div className="flex-1 h-2 bg-[#0d1728] rounded overflow-hidden border border-[#1e2b45]">
+                <div className="h-full bg-sky-500" style={{ width: `${w}%` }} />
+              </div>
+              <div className="w-20 text-right tnum text-xs text-slate-300">
+                {v != null ? `${(v * 100).toFixed(1)}% (${rest[k].gp})` : `— (${rest[k].gp})`}
+              </div>
+            </div>
+          );
+        })}
+        <div className="text-xs text-slate-500">save percentage by days' rest before the start</div>
       </div>
     </div>
   );
@@ -8814,6 +9103,177 @@ function RatingBar({ label, v }) {
   );
 }
 
+/* Two thin bars per rating instead of one — sky for the first player, emerald
+   for the second, the same pairing the point-shares split already uses. */
+function RatingCompareBar({ label, a, b }) {
+  return (
+    <div className="flex items-center gap-2">
+      <div className="w-10 text-[11px] uppercase text-slate-400">{label}</div>
+      <div className="flex-1 space-y-0.5">
+        <div className="flex items-center gap-1.5">
+          <div className="flex-1 h-1.5 bg-[#0d1728] rounded overflow-hidden border border-[#1e2b45]">
+            <div className="h-full bg-sky-500" style={{ width: `${clamp(a, 0, 99)}%` }} />
+          </div>
+          <div className="w-6 text-right tnum text-[11px] text-sky-300">{a}</div>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <div className="flex-1 h-1.5 bg-[#0d1728] rounded overflow-hidden border border-[#1e2b45]">
+            <div className="h-full bg-emerald-500" style={{ width: `${clamp(b, 0, 99)}%` }} />
+          </div>
+          <div className="w-6 text-right tnum text-[11px] text-emerald-300">{b}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* A search box that resolves to one player. Mirrors CommandPalette's player
+   search rather than a giant <select> — the league runs well past a thousand
+   names. */
+function PlayerPicker({ G, label, value, onChange, otherId, matchKind }) {
+  const [q, setQ] = useState("");
+  const p = value != null ? G.players[value] : null;
+  /* matchKind is the OTHER picker's already-chosen pos==="G" — filtering the
+     results to that kind here means a skater/goalie mismatch is impossible
+     to create, rather than something CompareModal has to reject afterward. */
+  const hits = useMemo(() => {
+    const ql = q.trim().toLowerCase();
+    if (ql.length < 2) return [];
+    const out = [];
+    playersOf(G).forEach((pl) => {
+      if (out.length >= 8 || pl.retired || pl.id === otherId) return;
+      if (matchKind != null && (pl.pos === "G") !== matchKind) return;
+      if (fullName(pl).toLowerCase().includes(ql)) out.push(pl);
+    });
+    return out;
+  }, [q, G, otherId, matchKind]);
+  return (
+    <div className="space-y-1">
+      <div className="text-[11px] uppercase text-slate-400">{label}</div>
+      {p ? (
+        <div className="flex items-center justify-between gap-2 px-2 py-1.5 rounded bg-[#101a2e] border border-[#1e2b45]">
+          <span className="text-sm">{fullName(p)}
+            <span className="text-slate-500 text-xs"> · {p.pos} · {p.teamId != null ? G.teams[p.teamId].abbr : "FA"}</span>
+          </span>
+          <button className="text-xs text-slate-400 hover:text-slate-200" onClick={() => onChange(null)}>Change</button>
+        </div>
+      ) : (
+        <div className="relative">
+          <input className="w-full bg-[#0d1728] border border-[#1e2b45] rounded px-2 py-1.5 text-sm outline-none focus:border-sky-600"
+            placeholder="Search a player…" value={q} onChange={(e) => setQ(e.target.value)} />
+          {hits.length ? (
+            <div className="absolute z-10 mt-1 w-full max-h-56 overflow-y-auto rounded border border-[#1e2b45] bg-[#0e1729] shadow-lg">
+              {hits.map((pl) => (
+                <button key={pl.id} className="w-full flex items-center justify-between gap-2 px-2 py-1.5 text-left text-sm hover:bg-[#16223a]"
+                  onClick={() => { onChange(pl.id); setQ(""); }}>
+                  <span>{fullName(pl)}</span>
+                  <span className="text-xs text-slate-500">{pl.pos} · {pl.ovr} ovr · {pl.teamId != null ? G.teams[pl.teamId].abbr : "FA"}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CompareSeasonLine({ G, a, b }) {
+  const isG = a.pos === "G";
+  const rows = isG ? [
+    ["GP", (p) => p.season.gp],
+    ["W-L-OTL", (p) => `${p.season.w}-${p.season.l}-${p.season.otl}`],
+    ["SV%", (p) => (svPct(p.season) * 100).toFixed(1)],
+    ["GAA", (p) => gaa(p.season).toFixed(2)],
+    ["SO", (p) => p.season.so],
+    ["Point shares", (p) => pointShares(G, p).ps.toFixed(1)],
+  ] : [
+    ["GP", (p) => p.season.gp],
+    ["G", (p) => p.season.g],
+    ["A", (p) => p.season.a],
+    ["P", (p) => pts(p.season)],
+    ["+/-", (p) => (p.season.pm > 0 ? "+" : "") + p.season.pm],
+    ["SOG", (p) => p.season.sog],
+    ["Point shares", (p) => pointShares(G, p).ps.toFixed(1)],
+  ];
+  return (
+    <div className="grid grid-cols-3 gap-y-1.5 text-sm pt-1">
+      <div />
+      <div className="text-sky-300 text-xs text-right pr-1">A</div>
+      <div className="text-emerald-300 text-xs text-right pr-1">B</div>
+      {rows.map(([label, get]) => (
+        <React.Fragment key={label}>
+          <div className="text-slate-400">{label}</div>
+          <div className="tnum text-right pr-1">{get(a)}</div>
+          <div className="tnum text-right pr-1">{get(b)}</div>
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
+
+/* Two players, side by side. Only ratings and stats that mean the same thing
+   for both are overlaid — a skater against a goalie has nothing in common on
+   a rating bar, so that pairing gets a plain heads-up instead of a chart that
+   would compare hnd to rfx as if they were the same scale. */
+function CompareModal({ G, initial, onClose }) {
+  const [a, setA] = useState(initial ? initial.a : null);
+  const [b, setB] = useState(initial ? initial.b : null);
+  const pa = a != null ? G.players[a] : null;
+  const pb = b != null ? G.players[b] : null;
+  // Both ways in here now refuse a mismatch before it arrives — PlayerPicker's
+  // matchKind once inside, RosterTab/StatsTab's Cmp queue before that — so
+  // this is a guard against a future entry point, not a path either of the
+  // current ones can reach.
+  const sameType = pa && pb && (pa.pos === "G") === (pb.pos === "G");
+  return (
+    <Modal wide title="Compare players" onClose={onClose}>
+      <div className="grid sm:grid-cols-2 gap-3 mb-3">
+        <PlayerPicker G={G} label="Player A" value={a} onChange={setA} otherId={b}
+          matchKind={pb ? pb.pos === "G" : null} />
+        <PlayerPicker G={G} label="Player B" value={b} onChange={setB} otherId={a}
+          matchKind={pa ? pa.pos === "G" : null} />
+      </div>
+      {!pa || !pb ? (
+        <div className="text-sm text-slate-500 py-6 text-center">Pick two players to compare them.</div>
+      ) : !sameType ? (
+        <div className="text-sm text-amber-300 py-2">
+          Pick two players of the same kind — a skater against a skater, or a goalie against a goalie.
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            {[pa, pb].map((p, i) => (
+              <div key={p.id} className={`text-sm font-semibold ${i === 0 ? "text-sky-300" : "text-emerald-300"}`}>
+                {fullName(p)}
+                <span className="block text-xs font-normal text-slate-400">
+                  {p.teamId != null ? `${G.teams[p.teamId].city} ${G.teams[p.teamId].name}` : "Free agent"}
+                  {" "}· Age {p.age} · {p.ovr} ovr (ceiling {p.pot})
+                </span>
+              </div>
+            ))}
+          </div>
+          <Section title="Ratings" className="p-3 space-y-1.5">
+            {(pa.pos === "G" ? GOALIE_KEYS : SKATER_KEYS).map((k) => (
+              <RatingCompareBar key={k} label={k} a={pa.r[k]} b={pb.r[k]} />
+            ))}
+          </Section>
+          <Section title="This season" className="p-3">
+            <CompareSeasonLine G={G} a={pa} b={pb} />
+          </Section>
+          <div className="grid sm:grid-cols-2 gap-3">
+            {[pa, pb].map((p) => (
+              <Section key={p.id} title={fullName(p)} className="p-3">
+                <ShotRink z={(p.season && p.season.z) || blankZones(p.pos === "G" ? "G" : "S")} mode={p.pos === "G" ? "G" : "S"} />
+              </Section>
+            ))}
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 /* Point shares as a number AND a bar, because the number alone doesn't say
    whether 6.8 was a good year. `split` draws the offensive and defensive halves
    in the same two colours the OPS and DPS columns use, so one glance says both
@@ -8915,7 +9375,7 @@ function DevelopmentNote({ G, p }) {
   );
 }
 
-function PlayerModal({ G, setG, pid, onClose, onGo }) {
+function PlayerModal({ G, setG, pid, onClose, onGo, onCompare }) {
   const [netView, setNetView] = useState("dots");
   const p = G.players[pid];
   if (!p) return null;
@@ -8949,7 +9409,8 @@ function PlayerModal({ G, setG, pid, onClose, onGo }) {
         {hasNtc(p) ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-900 text-amber-200">NTC</span> : null}
         {p.inj > 0 ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-900 text-rose-200">INJ {p.inj}</span> : null}
       </span>
-    } onClose={onClose}>
+    } onClose={onClose}
+    actions={onCompare ? <button className={btnGhost} onClick={() => onCompare(p.id)}>Compare</button> : null}>
       <div className="grid sm:grid-cols-2 gap-3">
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-2">
@@ -9086,6 +9547,11 @@ function PlayerModal({ G, setG, pid, onClose, onGo }) {
           {(G.gameLog || {})[p.id] && G.gameLog[p.id].length ? (
             <Section title="Form" className="p-3">
               <div className="pt-1"><FormBars log={G.gameLog[p.id]} mode={isG ? "G" : "S"} /></div>
+            </Section>
+          ) : null}
+          {isG && (G.gameLog || {})[p.id] && G.gameLog[p.id].length ? (
+            <Section title="Workload" className="p-3">
+              <div className="pt-1"><GoalieWorkload log={G.gameLog[p.id]} /></div>
             </Section>
           ) : null}
           {(G.gameLog || {})[p.id] && G.gameLog[p.id].length ? (
@@ -10007,7 +10473,7 @@ function FarmLeaguePanel({ G, openPlayer }) {
   );
 }
 
-function RosterTab({ G, setG, openPlayer, notify }) {
+function RosterTab({ G, setG, openPlayer, notify, onCompare }) {
   const [showFarm, setShowFarm] = useState(false);
   // The signing bonus offered on every extension below, until you change it.
   const [exSb, setExSb] = useState(0);
@@ -10015,6 +10481,26 @@ function RosterTab({ G, setG, openPlayer, notify }) {
   const roster = rosterOf(G, G.userTeam, true).filter((p) => (showFarm ? p.farm : !p.farm));
   const hit = capHit(G, G.userTeam), space = capSpace(G, G.userTeam);
   const dead = retainedBy(G, G.userTeam);
+
+  /* Getting to a comparison always cost a full profile open first — this queues
+     two rows straight from the table without leaving it. The first pick stays
+     queued after the modal opens, so checking one player against three or four
+     rivals in a row is one click each instead of re-queuing him every time;
+     "Cancel" (below) or clicking his own row again is what actually drops him. */
+  const [cmpSel, setCmpSel] = useState([]);
+  const toggleCompare = (p) => {
+    setCmpSel((sel) => {
+      if (sel.includes(p.id)) return sel.filter((id) => id !== p.id);
+      // Same rule PlayerPicker's matchKind enforces inside the modal: a
+      // skater/goalie pairing is never valid, so a mismatched second pick
+      // restarts the queue with just him rather than opening the modal onto
+      // its "pick two of the same kind" dead end.
+      if (sel.length === 1 && (G.players[sel[0]].pos === "G") !== (p.pos === "G")) return [p.id];
+      const next = sel.length >= 2 ? [sel[1], p.id] : [...sel, p.id];
+      if (next.length === 2) { onCompare(next[0], next[1]); return [next[0]]; }
+      return next;
+    });
+  };
 
   const move = (p) => {
     if (p.farm) {
@@ -10130,6 +10616,11 @@ function RosterTab({ G, setG, openPlayer, notify }) {
     { key: "yrs", label: "Yrs", get: (p) => p.contract.yrs },
     { key: "act", label: "", get: () => 0, cell: (p) => (
       <span className="flex gap-2 justify-end whitespace-nowrap">
+        <button className={`text-xs hover:underline ${cmpSel.includes(p.id) ? "text-emerald-300" : "text-slate-500"}`}
+          title={cmpSel.includes(p.id) ? "Selected for comparison — click to remove" : "Queue for comparison"}
+          onClick={(e) => { e.stopPropagation(); toggleCompare(p); }}>
+          {cmpSel.includes(p.id) ? "✓ Cmp" : "Cmp"}
+        </button>
         {/* A stint is a demotion with a counter on it — offered only to a man
             who is fit but not yet sharp, which is the whole case for it. */}
         {canCondition(G, p) ? (
@@ -10283,6 +10774,14 @@ function RosterTab({ G, setG, openPlayer, notify }) {
           {dead.map((r) => `${G.players[r.pid] ? shortName(G.players[r.pid]) : "?"} $${r.amt}M (${r.yrs}y${r.dead ? ", released" : " retained"})`).join(" · ")}
         </div>
       ) : null}
+      {cmpSel.length ? (
+        <div className={`${card} p-3 text-sm flex items-center gap-2`}>
+          <span className="text-slate-400">
+            {shortName(G.players[cmpSel[0]])} queued — click "Cmp" on another player to compare them.
+          </span>
+          <button className={`${btnGhost} text-xs px-2 py-1`} onClick={() => setCmpSel([])}>Cancel</button>
+        </div>
+      ) : null}
       <Section>
         <SortTable min={860} cols={cols} rows={roster} initial="ovr" rowKey={(p) => p.id}
           onRow={(p) => openPlayer(p.id)}
@@ -10295,6 +10794,15 @@ function RosterTab({ G, setG, openPlayer, notify }) {
 }
 
 /* --------------------------------- lines ---------------------------------- */
+
+const MoveButtons = ({ onUp, onDown, canUp, canDown }) => (
+  <span className="flex flex-col leading-none">
+    <button className="text-slate-500 hover:text-sky-300 disabled:opacity-20 disabled:hover:text-slate-500"
+      disabled={!canUp} onClick={onUp} title="Move this line up">▲</button>
+    <button className="text-slate-500 hover:text-sky-300 disabled:opacity-20 disabled:hover:text-slate-500"
+      disabled={!canDown} onClick={onDown} title="Move this line down">▼</button>
+  </span>
+);
 
 function LinesTab({ G, setG }) {
   const lines = ensureLines(G, G.userTeam);
@@ -10320,6 +10828,25 @@ function LinesTab({ G, setG }) {
     }
     if (kind === "F") L.F[li][si] = newId; else if (kind === "D") L.D[li][si] = newId; else L.G[si] = newId;
     t.lines = L;
+    // Keeps a manual edit from evaporating the next time something unrelated
+    // invalidates the lineup — autoLines preserves any row it still matches.
+    t.lastLines = { F: L.F, D: L.D };
+    g2.teams[G.userTeam] = t;
+    setG(g2);
+  }
+
+  // Moves a whole line/pair up or down as a unit — the adjustment a coach
+  // actually makes ("bump the checking line up") rather than one slot at a time.
+  function moveLine(kind, li, dir) {
+    const g2 = { ...G, teams: G.teams.slice() };
+    const t = { ...g2.teams[G.userTeam] };
+    const L = JSON.parse(JSON.stringify(t.lines || lines));
+    const rows = kind === "F" ? L.F : L.D;
+    const j = li + dir;
+    if (j < 0 || j >= rows.length) return;
+    [rows[li], rows[j]] = [rows[j], rows[li]];
+    t.lines = L;
+    t.lastLines = { F: L.F, D: L.D };
     g2.teams[G.userTeam] = t;
     setG(g2);
   }
@@ -10456,9 +10983,10 @@ function LinesTab({ G, setG }) {
           {lines.F.map((ln, i) => {
             const games = (G.teams[G.userTeam].lineChem || [])[i] || 0;
             return (
-              <div key={i} className="grid grid-cols-[2rem_1fr_1fr_1fr] gap-1.5 sm:gap-2 items-center">
-                <div className="text-xs text-slate-500" title={games > 0 ? `Together ${games} game${games === 1 ? "" : "s"} running — a small chemistry bonus` : "Just set — no chemistry yet"}>
-                  L{i + 1}{games >= LINE_CHEM_MAX_GAMES ? <span className="text-emerald-400"> ●</span> : null}
+              <div key={i} className="grid grid-cols-[3.25rem_1fr_1fr_1fr] gap-1.5 sm:gap-2 items-center">
+                <div className="flex items-center gap-1 text-xs text-slate-500" title={games > 0 ? `Together ${games} game${games === 1 ? "" : "s"} running — a small chemistry bonus` : "Just set — no chemistry yet"}>
+                  <span>L{i + 1}{games >= LINE_CHEM_MAX_GAMES ? <span className="text-emerald-400"> ●</span> : null}</span>
+                  <MoveButtons onUp={() => moveLine("F", i, -1)} onDown={() => moveLine("F", i, 1)} canUp={i > 0} canDown={i < lines.F.length - 1} />
                 </div>
                 {[0, 1, 2].map((si) => (
                   <Slot key={si} kind="F" li={i} si={si} id={ln[si]} filter={(p) => p.pos !== "G" && p.pos !== "D"} />
@@ -10474,9 +11002,10 @@ function LinesTab({ G, setG }) {
           {lines.D.map((pr, i) => {
             const games = (G.teams[G.userTeam].pairChem || [])[i] || 0;
             return (
-              <div key={i} className="grid grid-cols-[2rem_1fr_1fr] gap-1.5 sm:gap-2 items-center">
-                <div className="text-xs text-slate-500" title={games > 0 ? `Together ${games} game${games === 1 ? "" : "s"} running — a small chemistry bonus` : "Just set — no chemistry yet"}>
-                  D{i + 1}{games >= PAIR_CHEM_MAX_GAMES ? <span className="text-emerald-400"> ●</span> : null}
+              <div key={i} className="grid grid-cols-[3.25rem_1fr_1fr] gap-1.5 sm:gap-2 items-center">
+                <div className="flex items-center gap-1 text-xs text-slate-500" title={games > 0 ? `Together ${games} game${games === 1 ? "" : "s"} running — a small chemistry bonus` : "Just set — no chemistry yet"}>
+                  <span>D{i + 1}{games >= PAIR_CHEM_MAX_GAMES ? <span className="text-emerald-400"> ●</span> : null}</span>
+                  <MoveButtons onUp={() => moveLine("D", i, -1)} onDown={() => moveLine("D", i, 1)} canUp={i > 0} canDown={i < lines.D.length - 1} />
                 </div>
                 {[0, 1].map((si) => <Slot key={si} kind="D" li={i} si={si} id={pr[si]} filter={(p) => p.pos === "D"} />)}
               </div>
@@ -10700,12 +11229,38 @@ function StandingsTab({ G, openTeam }) {
 
 /* ---------------------------------- stats --------------------------------- */
 
-function StatsTab({ G, openPlayer }) {
+function StatsTab({ G, openPlayer, onCompare }) {
   const [mode, setMode] = useState("skaters");
   const [scope, setScope] = useState("league");
   const pool = (p) => (scope === "mine" ? p.teamId === G.userTeam : true);
   const skaters = playersOf(G).filter((p) => p.pos !== "G" && p.season.gp > 0 && pool(p));
   const goalies = playersOf(G).filter((p) => p.pos === "G" && p.season.gp >= 3 && pool(p));
+
+  /* Same queue-and-compare affordance as the roster table, including the same
+     fix: the first pick stays queued after the modal opens, so checking one
+     player against three or four rivals in a row is one click each. */
+  const [cmpSel, setCmpSel] = useState([]);
+  const toggleCompare = (p) => {
+    setCmpSel((sel) => {
+      if (sel.includes(p.id)) return sel.filter((id) => id !== p.id);
+      // Switching mode (skaters <-> goalies) between the two clicks was the
+      // one way this table could still queue a mismatched pair — same fix as
+      // RosterTab: a mismatched second pick restarts the queue with just him.
+      if (sel.length === 1 && (G.players[sel[0]].pos === "G") !== (p.pos === "G")) return [p.id];
+      const next = sel.length >= 2 ? [sel[1], p.id] : [...sel, p.id];
+      if (next.length === 2) { onCompare(next[0], next[1]); return [next[0]]; }
+      return next;
+    });
+  };
+  const cmpCol = { key: "cmp", label: "", get: () => 0, cell: (p) => (
+    <span className="flex justify-end">
+      <button className={`text-xs hover:underline ${cmpSel.includes(p.id) ? "text-emerald-300" : "text-slate-500"}`}
+        title={cmpSel.includes(p.id) ? "Selected for comparison — click to remove" : "Queue for comparison"}
+        onClick={(e) => { e.stopPropagation(); toggleCompare(p); }}>
+        {cmpSel.includes(p.id) ? "✓ Cmp" : "Cmp"}
+      </button>
+    </span>
+  ) };
   // A traded player shows where he is now, with the full path on hover.
   const teamCell = (p) => {
     const spells = (p.stints || []).filter((st) => st.s.gp);
@@ -10757,6 +11312,7 @@ function StatsTab({ G, openPlayer }) {
       cell: (p) => sh(p).dps.toFixed(1) },
     { key: "ps", label: "PS", get: (p) => sh(p).ps, cls: "font-semibold",
       cell: (p) => <ShareBar v={sh(p).ps} max={psPeak} split={[sh(p).ops, sh(p).dps]} /> },
+    cmpCol,
   ];
   const goalieCols = [
     { key: "name", label: "Goalie", get: (p) => p.ln, cell: nameCell },
@@ -10774,6 +11330,7 @@ function StatsTab({ G, openPlayer }) {
       cell: (p) => (p.season.sosa ? `${p.season.sosv}/${p.season.sosa}` : "—") },
     { key: "ps", label: "PS", get: (p) => sh(p).ps, cls: "font-semibold",
       cell: (p) => <ShareBar v={sh(p).ps} max={psPeak} /> },
+    cmpCol,
   ];
   return (
     <div className="space-y-3">
@@ -10784,6 +11341,14 @@ function StatsTab({ G, openPlayer }) {
         <button className={scope === "league" ? btnPri : btnGhost} onClick={() => setScope("league")}>League</button>
         <button className={scope === "mine" ? btnPri : btnGhost} onClick={() => setScope("mine")}>My club</button>
       </div>
+      {cmpSel.length ? (
+        <div className={`${card} p-3 text-sm flex items-center gap-2`}>
+          <span className="text-slate-400">
+            {shortName(G.players[cmpSel[0]])} queued — click "Cmp" on another player to compare them.
+          </span>
+          <button className={`${btnGhost} text-xs px-2 py-1`} onClick={() => setCmpSel([])}>Cancel</button>
+        </div>
+      ) : null}
       <Section>
         <SortTable min={mode === "skaters" ? 1040 : 900} rowKey={(p) => p.id} onRow={(p) => openPlayer(p.id)}
           rowCls={(p) => (p.teamId === G.userTeam ? "bg-sky-950/30" : "")}
@@ -10960,6 +11525,13 @@ function GameTab({ G, openPlayer }) {
           </div>
         </div>
         <div className="text-xs text-slate-500 mt-1">{lg.so ? "Decided in a shootout" : lg.ot ? "Overtime" : "Regulation"}</div>
+        {lg.chem ? (() => {
+          const parts = [lg.away, lg.home].map((tid) => {
+            const note = jelledNote(lg.chem[tid]);
+            return note ? `${G.teams[tid].abbr} ${note}` : null;
+          }).filter(Boolean);
+          return parts.length ? <div className="text-xs text-emerald-400 mt-1">{parts.join("  ·  ")}</div> : null;
+        })() : null}
       </div>
 
       <div className="flex gap-2 flex-wrap">
@@ -11018,8 +11590,133 @@ function GameTab({ G, openPlayer }) {
 
 /* --------------------------------- trades --------------------------------- */
 
+/* A genuine three-way trade: three rosters, each piece sent to whichever of
+   the other two clubs wants it. Kept as its own panel rather than wired into
+   the two-club grid above — the destination choice a three-way deal needs
+   doesn't exist in a trade with only one place anything can go. */
+function ThreeWayTrade({ G, setG, notify, openPlayer, teamB, teamC, onCancel }) {
+  const teams = [G.userTeam, teamB, teamC];
+  const pkId = (pk) => `${pk.year}-${pk.round}-${pk.orig}`;
+  const otherTwo = (t) => teams.filter((x) => x !== t);
+  const [outPlayers, setOutPlayers] = useState({ [G.userTeam]: [], [teamB]: [], [teamC]: [] });
+  const [outPicks, setOutPicks] = useState({ [G.userTeam]: [], [teamB]: [], [teamC]: [] });
+  const [dest, setDest] = useState({});
+
+  const toggle = (t, id, isPick) => {
+    const bucket = isPick ? outPicks : outPlayers;
+    const setBucket = isPick ? setOutPicks : setOutPlayers;
+    if (bucket[t].includes(id)) {
+      setBucket({ ...bucket, [t]: bucket[t].filter((x) => x !== id) });
+      setDest((d) => { const d2 = { ...d }; delete d2[id]; return d2; });
+    } else {
+      setBucket({ ...bucket, [t]: bucket[t].concat(id) });
+      setDest((d) => ({ ...d, [id]: otherTwo(t)[0] }));
+    }
+  };
+
+  const picksByTeam = {};
+  teams.forEach((t) => { picksByTeam[t] = tradablePicks(G, t); });
+
+  const moves = useMemo(() => {
+    const legs = {};
+    const leg = (from, to) => (legs[`${from}-${to}`] = legs[`${from}-${to}`] || { from, to, players: [], picks: [] });
+    teams.forEach((t) => {
+      outPlayers[t].forEach((pid) => { if (dest[pid] != null) leg(t, dest[pid]).players.push(pid); });
+      outPicks[t].forEach((key) => {
+        if (dest[key] == null) return;
+        const pk = picksByTeam[t].find((x) => pkId(x) === key);
+        if (pk) leg(t, dest[key]).picks.push(pk);
+      });
+    });
+    return Object.values(legs);
+  }, [outPlayers, outPicks, dest, G]);
+
+  const ev = useMemo(() => evalTrade3(G, moves), [G, moves]);
+
+  const Col = ({ t }) => {
+    const roster = rosterOf(G, t, true).sort((a, b) => b.ovr - a.ovr);
+    return (
+      <Section title={`${G.teams[t].abbr}${t === G.userTeam ? " (you)" : ""}`} className="max-h-[26rem] overflow-y-auto">
+        <div className="p-2 space-y-0.5">
+          {roster.map((p) => (
+            <div key={p.id} className="flex flex-wrap items-center gap-1.5 px-2 py-1 rounded text-sm hover:bg-[#16223a]">
+              <input type="checkbox" checked={outPlayers[t].includes(p.id)} onChange={() => toggle(t, p.id, false)} />
+              <PosBadge pos={p.pos} />
+              <button className="text-left truncate hover:text-sky-300" onClick={() => openPlayer(p.id)}>
+                {shortName(p)}{hasNtc(p) ? <span className="ml-1 text-[10px] text-amber-300">NTC</span> : null}
+              </button>
+              <span className="text-slate-500 tnum text-xs">{p.ovr}</span>
+              {outPlayers[t].includes(p.id) ? (
+                <span className="flex gap-1 ml-auto">
+                  {otherTwo(t).map((d) => (
+                    <button key={d} onClick={() => setDest((x) => ({ ...x, [p.id]: d }))}
+                      className={`text-[10px] px-1.5 py-0.5 rounded ${dest[p.id] === d ? "bg-sky-600 text-white" : "bg-[#16233c] text-slate-400"}`}>
+                      → {G.teams[d].abbr}
+                    </button>
+                  ))}
+                </span>
+              ) : null}
+            </div>
+          ))}
+          {picksByTeam[t].length ? (
+            <div className="text-[11px] uppercase tracking-wide text-slate-500 px-2 pt-2">Draft picks</div>
+          ) : null}
+          {picksByTeam[t].map((pk) => {
+            const key = pkId(pk);
+            const L = pickLabel(G, pk, t);
+            return (
+              <div key={key} className="flex flex-wrap items-center gap-1.5 px-2 py-1 rounded text-sm hover:bg-[#16223a]">
+                <input type="checkbox" checked={outPicks[t].includes(key)} onChange={() => toggle(t, key, true)} />
+                <span className="truncate">{L.text}</span>
+                {outPicks[t].includes(key) ? (
+                  <span className="flex gap-1 ml-auto">
+                    {otherTwo(t).map((d) => (
+                      <button key={d} onClick={() => setDest((x) => ({ ...x, [key]: d }))}
+                        className={`text-[10px] px-1.5 py-0.5 rounded ${dest[key] === d ? "bg-sky-600 text-white" : "bg-[#16233c] text-slate-400"}`}>
+                        → {G.teams[d].abbr}
+                      </button>
+                    ))}
+                  </span>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      </Section>
+    );
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="grid md:grid-cols-3 gap-3">
+        {teams.map((t) => <Col key={t} t={t} />)}
+      </div>
+      <div className={`${card} p-3 flex flex-wrap items-center gap-3`}>
+        <div className="text-sm">
+          <span className="text-slate-400">Their read: </span>
+          {moves.length
+            ? <span className={ev.ok ? "text-emerald-400" : "text-amber-400"}>{ev.why}</span>
+            : <span className="text-slate-500">pick some pieces, then send each one somewhere</span>}
+        </div>
+        <div className="flex-1" />
+        <button className={btnGhost} onClick={onCancel}>Back to two clubs</button>
+        <button className={btnPri} disabled={!ev.ok} onClick={() => {
+          const g2 = migrate(JSON.parse(JSON.stringify(G)));
+          const r = doTrade3(g2, moves);
+          if (r.ok) {
+            setG(g2); setOutPlayers({ [G.userTeam]: [], [teamB]: [], [teamC]: [] });
+            setOutPicks({ [G.userTeam]: [], [teamB]: [], [teamC]: [] }); setDest({});
+            notify("Three-way trade completed.");
+          } else notify(r.why);
+        }}>Propose</button>
+      </div>
+    </div>
+  );
+}
+
 function TradeTab({ G, setG, notify, openPlayer }) {
   const [other, setOther] = useState(G.userTeam === 0 ? 1 : 0);
+  const [third, setThird] = useState(null);
   const [mine, setMine] = useState([]);
   const [theirs, setTheirs] = useState([]);
   const [myPicks, setMyPicks] = useState([]);
@@ -11136,15 +11833,40 @@ function TradeTab({ G, setG, notify, openPlayer }) {
       ) : null}
       <div className="flex gap-2 flex-wrap items-center">
         <select className={inputCls} value={other}
-          onChange={(e) => { setOther(+e.target.value); setTheirs([]); setTheirPicks([]); }}>
+          onChange={(e) => {
+            const v = +e.target.value;
+            setOther(v); setTheirs([]); setTheirPicks([]);
+            if (third === v) setThird(null);
+          }}>
           {G.teams.filter((t) => t.id !== G.userTeam).map((t) => (
             <option key={t.id} value={t.id}>{t.city} {t.name} — ${capSpace(G, t.id)}M space</option>
           ))}
         </select>
         {daysToDeadline(G) != null && daysToDeadline(G) > 0
           ? <span className="text-xs text-amber-300">{daysToDeadline(G)} days to the deadline</span> : null}
+        <div className="flex-1" />
+        {third == null ? (
+          <button className={btnGhost}
+            onClick={() => setThird(G.teams.find((t) => t.id !== G.userTeam && t.id !== other).id)}>
+            + bring in a third club
+          </button>
+        ) : (
+          <>
+            <span className="text-slate-400 text-sm">and</span>
+            <select className={inputCls} value={third} onChange={(e) => setThird(+e.target.value)}>
+              {G.teams.filter((t) => t.id !== G.userTeam && t.id !== other).map((t) => (
+                <option key={t.id} value={t.id}>{t.city} {t.name}</option>
+              ))}
+            </select>
+          </>
+        )}
       </div>
 
+      {third != null ? (
+        <ThreeWayTrade G={G} setG={setG} notify={notify} openPlayer={openPlayer}
+          teamB={other} teamC={third} onCancel={() => setThird(null)} />
+      ) : (
+      <>
       {(G.offers || []).length ? (
         <Section title={`Offers for your listed players (${G.offers.length})`}>
           <div className="max-h-72 overflow-y-auto">
@@ -11321,6 +12043,8 @@ function TradeTab({ G, setG, notify, openPlayer }) {
           } else notify(r.why);
         }}>Propose</button>
       </div>
+      </>
+      )}
     </div>
   );
 }
@@ -12720,7 +13444,132 @@ function WorldCupHistory({ G, openPlayer }) {
   );
 }
 
+/* ----------------------------- season summary ------------------------------
+ * One page per completed year — the table, the leaders, the awards, and how
+ * far YOUR club got. `seasonSummaryData` is the only thing that reads `h`
+ * (nothing here touches live `G` state), so the same read backs both the
+ * printable page and the plain-text copy — one definition of what a season
+ * summary contains, not two that can drift apart.
+ * ------------------------------------------------------------------------- */
+function achievementLabel(rounds) {
+  if (rounds == null) return null;
+  return ["Missed the playoffs", "Lost in the first round", "Lost in the second round",
+    "Lost in the Conference Final", "Won the Cup"][clamp(rounds, 0, 4)];
+}
+function seasonSummaryData(G, h) {
+  const champ = h.champion != null && G.teams[h.champion] ? G.teams[h.champion] : null;
+  const table = (h.standings || []).map((s) => ({ ...s, team: G.teams[s.id] }))
+    .sort((a, b) => b.pts - a.pts || (b.w - a.w));
+  const leaders = RECORD_DEFS.map((def) => {
+    const l = h.leaders && h.leaders[def.key];
+    return l ? { key: def.key, label: def.label, name: l.name, v: l.v } : null;
+  }).filter(Boolean);
+  // A winner's id can outlive him on the page but not in the save — `pruneSave`
+  // forgets the player eventually, and an old season just says so.
+  const awards = Object.keys(AWARD_LABEL).map((k) => {
+    const id = h.awards && h.awards[k];
+    if (id == null) return null;
+    const p = G.players[id];
+    return { key: k, label: AWARD_LABEL[k], name: p ? fullName(p) : "— no longer on record —" };
+  }).filter(Boolean);
+  return { year: h.year, champ, table, leaders, awards,
+    userRecord: h.userRecord, rounds: h.rounds != null ? h.rounds : null };
+}
+function seasonSummaryText(G, h) {
+  const d = seasonSummaryData(G, h);
+  const you = G.teams[G.userTeam];
+  const label = achievementLabel(d.rounds);
+  const lines = [`${d.year} SEASON`, ""];
+  if (d.champ) lines.push(`Champion: ${d.champ.city} ${d.champ.name}`);
+  lines.push(`${you.city} ${you.name}: ${d.userRecord.w}-${d.userRecord.l}-${d.userRecord.otl}`
+    + ` (${d.userRecord.pts} pts)${label ? ` — ${label}` : ""}`, "", "STANDINGS");
+  d.table.forEach((row, i) => lines.push(
+    `${i + 1}. ${row.team.city} ${row.team.name} — ${row.w}-${row.l}-${row.otl} (${row.pts})`));
+  lines.push("", "LEAGUE LEADERS");
+  d.leaders.forEach((l) => lines.push(`${l.label}: ${l.name} (${l.v})`));
+  lines.push("", "AWARDS");
+  d.awards.forEach((a) => lines.push(`${a.label}: ${a.name}`));
+  return lines.join("\n");
+}
+// Clipboard API needs a secure context the app doesn't always have (a LAN
+// address, say), so a hidden-textarea fallback keeps "copy" working anywhere.
+function copyText(text, notify) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => notify("Copied to clipboard."),
+      () => notify("Couldn't copy — select the text and copy it by hand."));
+    return;
+  }
+  const ta = document.createElement("textarea");
+  ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand("copy"); notify("Copied to clipboard."); }
+  catch (e) { notify("Couldn't copy — select the text and copy it by hand."); }
+  ta.remove();
+}
+function SeasonSummaryModal({ G, h, onClose, notify }) {
+  const d = seasonSummaryData(G, h);
+  const you = G.teams[G.userTeam];
+  const label = achievementLabel(d.rounds);
+  return (
+    <Modal wide title={`${d.year} season summary`} onClose={onClose}
+      actions={<>
+        <button className={btnGhost} onClick={() => copyText(seasonSummaryText(G, h), notify)}>Copy as text</button>
+        <button className={btnGhost} onClick={() => window.print()}>Print</button>
+      </>}>
+      {/* Printing the modal as-is would print the dark backdrop around it too —
+          this hides everything else on the page for the duration of the print. */}
+      <style>{"@media print { body > div > *:not(#season-summary-print-root) { visibility: hidden; } "
+        + "#season-summary-print-root, #season-summary-print-root * { visibility: visible; } "
+        + "#season-summary-print-root { position: fixed; inset: 0; } }"}</style>
+      <div id="season-summary-print-root" className="space-y-3 text-sm">
+        <div>
+          {d.champ ? <div className="font-medium">{d.champ.city} {d.champ.name} won the Cup.</div> : null}
+          <div className="text-slate-300">
+            {you.city} {you.name}: {d.userRecord.w}-{d.userRecord.l}-{d.userRecord.otl} ({d.userRecord.pts} pts)
+            {label ? <span className="text-slate-400"> — {label}</span> : null}
+          </div>
+        </div>
+        <Section title="Standings">
+          <div className="max-h-64 overflow-y-auto">
+            {d.table.map((row, i) => (
+              <div key={row.id} className={`flex items-center gap-2 px-3 py-1 text-xs border-b border-[#16223a] last:border-0
+                ${row.id === G.userTeam ? "bg-sky-950/40" : ""}`}>
+                <span className="w-6 text-slate-500 tnum">{i + 1}</span>
+                <span className="flex-1">{row.team.city} {row.team.name}</span>
+                <span className="tnum text-slate-400">{row.w}-{row.l}-{row.otl}</span>
+                <span className="tnum w-10 text-right">{row.pts}</span>
+              </div>
+            ))}
+          </div>
+        </Section>
+        <Section title="League leaders">
+          <div className="p-2 space-y-1 text-xs">
+            {d.leaders.length ? d.leaders.map((l) => (
+              <div key={l.key} className="flex justify-between gap-2">
+                <span className="text-slate-400">{l.label}</span>
+                <span>{l.name} <span className="text-slate-500 tnum">({l.v})</span></span>
+              </div>
+            )) : <div className="text-slate-500">No leaders recorded.</div>}
+          </div>
+        </Section>
+        <Section title="Awards">
+          <div className="p-2 space-y-1 text-xs">
+            {d.awards.length ? d.awards.map((a) => (
+              <div key={a.key} className="flex justify-between gap-2">
+                <span className="text-slate-400">{a.label}</span>
+                <span>{a.name}</span>
+              </div>
+            )) : <div className="text-slate-500">No awards recorded.</div>}
+          </div>
+        </Section>
+      </div>
+    </Modal>
+  );
+}
+
 function HistoryTab({ G, setG, notify, openPlayer, openTeam }) {
+  const [summaryYear, setSummaryYear] = useState(null);
+  const summaryRow = summaryYear != null ? G.history.find((h) => h.year === summaryYear) : null;
   return (
     <div className="space-y-3">
       <CareerAndOwnership G={G} setG={setG} notify={notify} openTeam={openTeam} />
@@ -12740,8 +13589,13 @@ function HistoryTab({ G, setG, notify, openPlayer, openTeam }) {
               cell: (h) => (h.awards && h.awards.mvp != null && G.players[h.awards.mvp])
                 ? <button className="hover:text-sky-300" onClick={() => openPlayer(h.awards.mvp)}>{fullName(G.players[h.awards.mvp])}</button>
                 : "—" },
+            { key: "summary", label: "", get: () => 0, cell: (h) => (
+              <button className="text-xs text-sky-400 hover:underline"
+                onClick={(e) => { e.stopPropagation(); setSummaryYear(h.year); }}>Summary</button>
+            ) },
           ]} empty="No completed seasons yet." />
       </Section>
+      {summaryRow ? <SeasonSummaryModal G={G} h={summaryRow} notify={notify} onClose={() => setSummaryYear(null)} /> : null}
       <WorldCupHistory G={G} openPlayer={openPlayer} />
       <DraftClassReport G={G} openPlayer={openPlayer} />
       <Section title="Clubs">
@@ -13679,7 +14533,7 @@ const TABS = [
 ];
 const GROUPS = ["Club", "League", "Market", "History"];
 
-function CommandPalette({ G, onClose, go, openPlayer, openTeam }) {
+function CommandPalette({ G, onClose, go, openPlayer, openTeam, openCompare }) {
   const [q, setQ] = useState("");
   const ref = useRef(null);
   useEffect(() => { if (ref.current && ref.current.focus) ref.current.focus(); }, []);
@@ -13689,6 +14543,8 @@ function CommandPalette({ G, onClose, go, openPlayer, openTeam }) {
     TABS.forEach((t) => {
       if (!ql || t.label.toLowerCase().includes(ql)) out.push({ kind: "tab", label: t.label, sub: t.group, go: () => go(t.key) });
     });
+    // Getting to a comparison used to cost a full profile open first.
+    if (!ql || "compare players".includes(ql)) out.push({ kind: "action", label: "Compare players", sub: "action", go: () => openCompare() });
     if (ql.length >= 2) {
       G.teams.forEach((t) => {
         if (`${t.city} ${t.name} ${t.abbr}`.toLowerCase().includes(ql))
@@ -13736,6 +14592,7 @@ function App() {
   const [palette, setPalette] = useState(false);
   const [player, setPlayer] = useState(null);
   const [club, setClub] = useState(null);
+  const [compare, setCompare] = useState(null);
   const [toast, setToast] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -13911,13 +14768,13 @@ function App() {
 
       <div className="max-w-6xl mx-auto p-3">
         {tab === "home" && <HomeTab G={G} setG={setG} go={go} openPlayer={setPlayer} />}
-        {tab === "roster" && <RosterTab G={G} setG={setG} openPlayer={setPlayer} notify={notify} />}
+        {tab === "roster" && <RosterTab G={G} setG={setG} openPlayer={setPlayer} notify={notify} onCompare={(a, b) => setCompare({ a, b })} />}
         {tab === "lines" && <LinesTab G={G} setG={setG} />}
         {tab === "room" && <RoomTab G={G} setG={setG} openPlayer={setPlayer} notify={notify} />}
         {tab === "game" && <GameTab G={G} openPlayer={setPlayer} />}
         {tab === "schedule" && <ScheduleTab G={G} openTeam={setClub} />}
         {tab === "standings" && <StandingsTab G={G} openTeam={setClub} />}
-        {tab === "stats" && <StatsTab G={G} openPlayer={setPlayer} />}
+        {tab === "stats" && <StatsTab G={G} openPlayer={setPlayer} onCompare={(a, b) => setCompare({ a, b })} />}
         {tab === "analytics" && <AnalyticsTab G={G} openTeam={setClub} />}
         {tab === "playoffs" && <PlayoffsTab G={G} setG={setG} openPlayer={setPlayer} />}
         {tab === "allstar" && <AllStarTab G={G} openPlayer={setPlayer} />}
@@ -13937,8 +14794,10 @@ function App() {
       ) : null}
 
       {showRules ? <RulesModal G={G} setG={setG} onClose={() => setShowRules(false)} /> : null}
-      {palette ? <CommandPalette G={G} go={go} openPlayer={setPlayer} openTeam={setClub} onClose={() => setPalette(false)} /> : null}
-      {player != null ? <PlayerModal G={G} setG={setG} pid={player} onClose={() => setPlayer(null)} /> : null}
+      {palette ? <CommandPalette G={G} go={go} openPlayer={setPlayer} openTeam={setClub} openCompare={() => setCompare({})} onClose={() => setPalette(false)} /> : null}
+      {player != null ? <PlayerModal G={G} setG={setG} pid={player} onClose={() => setPlayer(null)}
+        onCompare={(id) => { setPlayer(null); setCompare({ a: id }); }} /> : null}
+      {compare ? <CompareModal key={`${compare.a}-${compare.b}`} G={G} initial={compare} onClose={() => setCompare(null)} /> : null}
       {club != null ? <ClubModal G={G} teamId={club} onClose={() => setClub(null)} openPlayer={(id) => { setClub(null); setPlayer(id); }} /> : null}
       {showSlots ? (
         <Modal title="Save slots" onClose={() => setShowSlots(false)}>

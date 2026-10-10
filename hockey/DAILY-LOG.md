@@ -158,3 +158,23 @@ Format: `YYYY-MM-DD · SIZE · what shipped` — or `SKIPPED · reason`.
 - 2026-08-14 · SKIPPED · reverted automatically: tools/simtest.js failed
 - 2026-08-15 · SKIPPED · reverted automatically: tools/simtest.js failed
 - 2026-08-16 · SKIPPED · reverted automatically: tools/simtest.js failed
+- 2026-08-18 · SKIPPED · reverted automatically: tools/simtest.js failed
+- 2026-08-25 · SKIPPED · reverted automatically: tools/simtest.js failed
+- 2026-08-31 · SKIPPED · reverted automatically: tools/simtest.js failed
+- 2026-09-01 · SKIPPED · reverted automatically: tools/simtest.js failed
+- 2026-09-04 · S · Chemistry-aware auto lines. `autoLines` used to rebuild all four forward lines
+  and all three defence pairs from the depth chart on every call, so a single injury or call-up
+  anywhere on the roster reset every line's streak, not just the one it actually touched. `t.lastLines`
+  now survives the ~20 places that null `t.lines`, and any line or pair whose players are all still
+  active gets copied straight back into the same slots — reserved in its own pass before the
+  rebuilt lines are filled, so a rebuild can't poach a player an untouched line was about to keep.
+  The manual line editor writes `t.lastLines` too, so a hand-built pairing survives an unrelated
+  roster change the same way an automatic one does. Harness grew from 1529 to 1532 assertions.
+- 2026-09-16 · S · Whole-line reordering in `LinesTab`. `swap` could only exchange the occupants
+  of two slots one at a time, so bumping a winger up to the top line meant re-picking every player
+  below him from a dropdown. Small ▲▼ buttons next to each forward line and defence pair now call
+  a new `moveLine`, which swaps two whole rows in one move and writes `t.lastLines` the same way
+  `swap` already does, so the change survives the next unrelated roster shuffle. UI-only, verified
+  by static review and `node tools/simtest.js` (1538/1538); no browser was available in this
+  container to click-test it, so that pass is still owed. Harness assertion count unaffected by
+  this change (no new engine surface to check).
