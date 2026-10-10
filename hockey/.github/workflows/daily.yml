@@ -1,0 +1,271 @@
+name: Daily build
+
+# Every morning, Claude picks ONE thing off ROADMAP.md, builds it, and commits
+# it to main — but only if tools/simtest.js still passes.
+#
+# The gate is deliberately paranoid, because nobody is watching this run:
+#   * the harness must pass afterwards, independently of whatever Claude claims;
+#   * the harness must not have SHRUNK — weakening a check to make a change pass
+#     is the obvious failure mode, so a drop in assertion count reverts the day;
+#   * .github/ is off limits, so the job can't rewrite its own rules.
+# If any of that trips, the whole working tree is thrown away and the day is
+# recorded in DAILY-LOG.md as skipped, with the reason.
+#
+# Size budget: S or M Monday-Saturday, L allowed on Sundays. That's what stops
+# it from either sandbagging with typo fixes or trying to rewrite the engine on
+# a Tuesday.
+#
+# To steer it: edit ROADMAP.md, or open an issue labelled `next`.
+# To pause it: disable this workflow in the Actions tab.
+
+on:
+  workflow_dispatch:
+    inputs:
+      idea:
+        description: "Build this specific thing instead of picking from the roadmap"
+        required: false
+        type: string
+      size:
+        description: "Size budget for this run"
+        required: false
+        default: "auto"
+        type: choice
+        options: [auto, S, M, L]
+  schedule:
+    - cron: "0 12 * * *"   # 8am ET / 7am EST
+
+permissions:
+  contents: write
+  issues: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # ── Baseline ──────────────────────────────────────────────────────────
+      # If main is already red, that IS the day's job — say so in the prompt
+      # rather than building a feature on top of a broken engine.
+      - name: Baseline harness
+        id: base
+        run: |
+          ASSERTS=$(grep -o 'ok(' tools/simtest.js | wc -l | tr -d ' ')
+          echo "asserts=$ASSERTS" >> "$GITHUB_OUTPUT"
+          if node tools/simtest.js > /tmp/base.log 2>&1; then
+            echo "green=true" >> "$GITHUB_OUTPUT"
+            echo "main is green ($ASSERTS assertions)"
+          else
+            echo "green=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::main is RED — today's job is to fix it"
+            tail -40 /tmp/base.log
+          fi
+
+      - name: Work out today's brief
+        id: brief
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IDEA: ${{ inputs.idea }}
+          SIZE_IN: ${{ inputs.size }}
+        run: |
+          DATE="$(date -u +%Y-%m-%d)"
+          DOW="$(date -u +%u)"          # 7 = Sunday
+          if [[ "$SIZE_IN" != "" && "$SIZE_IN" != "auto" ]]; then
+            SIZE="$SIZE_IN only"
+          elif [[ "$DOW" == "7" ]]; then
+            SIZE="S, M or L — it's Sunday, so a large item is allowed"
+          else
+            SIZE="S or M only — L items are reserved for Sundays"
+          fi
+          PINNED="$(gh issue list --label next --state open --limit 1 \
+                    --json number,title,body \
+                    --jq '.[] | "#\(.number) \(.title)\n\(.body)"' 2>/dev/null || true)"
+          {
+            echo "date=$DATE"
+            echo "size=$SIZE"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "pinned<<PINEOF"
+            echo "$PINNED"
+            echo "PINEOF"
+            echo "idea<<IDEAEOF"
+            echo "$IDEA"
+            echo "IDEAEOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "Date $DATE · size budget: $SIZE"
+
+      # ── The day's work ────────────────────────────────────────────────────
+      - name: Build one thing
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          claude_args: "--allowedTools Bash,Read,Edit,Write,Glob,Grep --max-turns 60 --model claude-sonnet-5"
+          prompt: |
+            You are the daily autopilot for Pocket GM — Hockey, a single-file
+            React hockey management game. Today is ${{ steps.brief.outputs.date }}.
+
+            Your job today is to ship exactly ONE improvement, verified, and
+            leave the repo better than you found it. Not two. Not a sweeping
+            refactor. One thing, done properly.
+
+            ## Step 1 — Read before you touch anything
+            - `CLAUDE.md` — the architecture, the engine, and the gotchas. Read
+              all of it. The gotchas section exists because those bugs already
+              happened once.
+            - `ROADMAP.md` — the idea pool, tagged S / M / L.
+            - `DAILY-LOG.md` — the last 30 days. **You may not build anything
+              already listed there**, including things logged as skipped or
+              reverted. A reverted item means Kyle didn't want it.
+            - `git log --oneline -20` for what's landed recently.
+
+            ## Step 2 — Pick ONE item
+            Priority order, first match wins:
+
+            ${{ steps.base.outputs.green == 'false' && '0. **MAIN IS RED.** `node tools/simtest.js` is failing on a clean checkout. Fixing it is today''s only job. Diagnose the failure, fix the engine (not the test), and skip the rest of this priority list.' || '' }}
+
+            ${{ steps.brief.outputs.idea != '' && format('1. Kyle asked for this specifically, so build it: {0}', steps.brief.outputs.idea) || '' }}
+
+            ${{ steps.brief.outputs.pinned != '' && format('2. An open issue is labelled `next`, which outranks the roadmap:{0}{1}', '
+
+            ', steps.brief.outputs.pinned) || '' }}
+
+            3. A `> **NEXT:**` line at the top of ROADMAP.md.
+            4. Otherwise, the highest item on ROADMAP.md that fits today's size
+               budget and isn't in the log.
+
+            **Size budget: ${{ steps.brief.outputs.size }}.**
+
+            Right-size honestly. An S is a genuine hour of work — a sortable
+            table, a keyboard shortcut, an empty-net rule. An M is a real
+            feature with its own state and UI. Don't pad an S into an M, and
+            don't quietly cut an M down to a one-liner.
+
+            ## Step 3 — Build it
+            - Match the surrounding code. Same density, same naming, same
+              comment style. Comments explain WHY, not what.
+            - Engine randomness goes through `rnd(G)`. Never `Math.random()` —
+              the determinism check will catch you.
+            - New state on `G` needs a line in `migrate(G)` so old saves survive.
+            - New rule knobs go in `RULES_DEFAULT`, and in `STRUCTURAL_RULES` if
+              they change the shape of a season.
+            - Anything reachable from the engine needs a case added to `CHECKS`
+              in `tools/simtest.js`, and any new function needs to be in
+              `EXPORTS`. **A feature with no check is a feature tomorrow's run
+              can silently break.**
+
+            ## Step 4 — Verify
+            Run `node tools/simtest.js` and get it green. If your change can't
+            pass, you have two honest options, in this order:
+            1. Fix it properly.
+            2. Revert everything with `git checkout -- .` and pick a different,
+               smaller item.
+
+            What you must NEVER do is weaken the harness to make a change pass.
+            Deleting or loosening an existing assertion is the one unforgivable
+            move here — the workflow counts assertions before and after and will
+            throw your whole day away if the number drops. Adding assertions is
+            always welcome.
+
+            ## Step 5 — Write it down
+            - Append one line to `DAILY-LOG.md` in the existing format:
+              `- ${{ steps.brief.outputs.date }} · SIZE · what you shipped, in one sentence`
+              Be specific and concrete. "Added goalie fatigue so a starter's save
+              percentage sags on the second night of a back-to-back" beats
+              "improved goalies".
+            - Remove the item you shipped from `ROADMAP.md`, and add ONE or TWO
+              fresh ideas somewhere sensible in it, tagged S / M / L. Base them
+              on what you actually saw in the code today — a rough edge you
+              noticed, a natural follow-on from what you just built. Concrete
+              ideas that name a file or function, not vague aspirations.
+            - Update `CLAUDE.md` if you changed the architecture, added a rule
+              knob, or found a new gotcha worth warning the next run about.
+
+            ## Hard rails
+            - **Never modify anything under `.github/`.** Not the workflow, not
+              its prompt. That's Kyle's, not yours.
+            - Never delete or disable an existing feature to make room.
+            - No new dependencies, no network calls, no CDN links. Everything
+              ships vendored and offline.
+            - Don't commit. A later step handles that.
+            - If you genuinely can't ship anything today, revert cleanly with
+              `git checkout -- .` and leave the tree untouched. A skipped day is
+              fine. A broken main is not.
+
+      # The action swallows the underlying error and only reports is_error, which
+      # is useless at 8am when nobody is watching. This puts the real message in
+      # the run log.
+      - name: Show Claude's execution log on failure
+        if: failure()
+        run: |
+          f="${RUNNER_TEMP}/claude-execution-output.json"
+          if [[ -f "$f" ]]; then
+            echo "── claude-execution-output.json ──"
+            cat "$f"
+          else
+            echo "no execution log at $f"
+            ls -la "${RUNNER_TEMP}" || true
+          fi
+
+      # ── The gate ──────────────────────────────────────────────────────────
+      - name: Verify and commit
+        env:
+          BASE_ASSERTS: ${{ steps.base.outputs.asserts }}
+          DATE: ${{ steps.brief.outputs.date }}
+        run: |
+          set -u
+          git config user.name  "Hockey GM Autopilot"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          FAIL=""
+
+          # The workflow is not the agent's to edit.
+          if ! git diff --quiet -- .github/; then
+            FAIL="the run tried to modify .github/"
+          fi
+
+          # A harness that lost assertions is a harness that was weakened.
+          NOW_ASSERTS=$(grep -o 'ok(' tools/simtest.js | wc -l | tr -d ' ')
+          if [[ -z "$FAIL" && "$NOW_ASSERTS" -lt "$BASE_ASSERTS" ]]; then
+            FAIL="harness assertions dropped from $BASE_ASSERTS to $NOW_ASSERTS"
+          fi
+
+          # And the actual gate.
+          if [[ -z "$FAIL" ]] && ! node tools/simtest.js > /tmp/verify.log 2>&1; then
+            FAIL="tools/simtest.js failed"
+            tail -40 /tmp/verify.log
+          fi
+
+          if [[ -n "$FAIL" ]]; then
+            echo "::error::reverting today's work — $FAIL"
+            git checkout -- .
+            git clean -fd
+            printf -- '- %s · SKIPPED · reverted automatically: %s\n' "$DATE" "$FAIL" >> DAILY-LOG.md
+            git add DAILY-LOG.md
+            git commit -m "Autopilot $DATE: skipped ($FAIL)"
+            git push
+            exit 1
+          fi
+
+          if git diff --quiet && git diff --cached --quiet && [[ -z "$(git status --porcelain)" ]]; then
+            echo "Nothing changed — the run chose not to ship today."
+            printf -- '- %s · SKIPPED · the run found nothing worth shipping\n' "$DATE" >> DAILY-LOG.md
+            git add DAILY-LOG.md
+            git commit -m "Autopilot $DATE: nothing shipped"
+            git push
+            exit 0
+          fi
+
+          # The LAST line for today, not the first — more than one entry can share
+          # a date, and the first one is whatever was already there this morning.
+          SUMMARY=$(grep "^- $DATE" DAILY-LOG.md | tail -1 | sed "s/^- $DATE · //" | cut -c1-72)
+          [[ -n "$SUMMARY" ]] || SUMMARY="daily update"
+          git add -A
+          git commit -m "Autopilot $DATE: $SUMMARY"
+          git push
+          echo "Shipped: $SUMMARY ($NOW_ASSERTS assertions green)"

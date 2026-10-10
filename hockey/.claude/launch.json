@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "hockey-gm",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8142"],
+      "port": 8142
+    }
+  ]
+}
