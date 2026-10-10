@@ -108,5 +108,10 @@ Manual runs still work from the Actions tab.
 
 ## Deploy
 
-Vercel builds with `node build.js`, output `dist/`. Pushing to `main` is what publishes — there are
-no other repos to push to any more.
+**GitHub Pages** — `.github/workflows/pages.yml` builds and publishes on every push to `main`, to
+https://kyleb0226.github.io/pocket-gm-hub/. That is the same origin the old game repos were served
+from (`kyleb0226.github.io/soccer-gm/` etc., which broke when they were renamed -OBS), so every save
+made on those pages appears here automatically — storage is per origin, not per path. Everything in
+`site/` is path-relative so the build works at a domain root or under a subpath.
+
+`vercel.json` is still here for a Vercel deploy, but no Vercel project existed as of Oct 2026.

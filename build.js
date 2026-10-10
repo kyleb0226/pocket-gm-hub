@@ -72,7 +72,7 @@ if (IOS) {
   // The "put it on your home screen" panel and the browser wording mean nothing
   // inside the app.
   edit(path.join(OUT, "index.html"), s => s
-    .replace(/href="\/(soccer|baseball|hockey)\/"/g, 'href="$1/index.html"')
+    .replace(/href="(soccer|baseball|hockey)\/"/g, 'href="$1/index.html"')
     .replace(/\s*<section class="panel">[\s\S]*?<\/section>/, "")
     .replace("run entirely in your browser. No account, no install required,", "run entirely on your phone. No account, no internet needed,"));
 }

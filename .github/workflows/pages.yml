@@ -1,0 +1,38 @@
+name: Deploy to GitHub Pages
+
+# Publishes the web build to https://kyleb0226.github.io/pocket-gm-hub/ on every
+# push to main. Same origin (kyleb0226.github.io) as the old soccer-gm,
+# baseball-gm and hockey-gm Pages sites, so every save made there shows up here
+# with nothing to transfer — browser storage is per origin, not per path.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: node build.js
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+      - id: deploy
+        uses: actions/deploy-pages@v4

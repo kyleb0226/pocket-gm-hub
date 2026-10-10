@@ -1,21 +1,22 @@
 /* Service worker for the Pocket GM menu page only.
  *
- * Its scope is the domain root, so it also sees requests for /soccer/, /baseball/
- * and /hockey/. It deliberately does NOT answer those: each game ships its own
+ * Paths are relative to wherever the site is served from — the domain root on
+ * Vercel, /pocket-gm-hub/ on GitHub Pages. Its scope is that folder, so it also
+ * sees requests for soccer/, baseball/ and hockey/ beneath it. It deliberately does NOT answer those: each game ships its own
  * worker at /<game>/sw.js, which takes over that scope once the game has been
  * opened. Passing through (no respondWith) leaves the browser's default fetch in
  * charge, so the hub can never serve a stale copy of a game.
  */
-const CACHE = "pocketgm-hub-v2";
-const GAMES = ["/soccer/", "/baseball/", "/hockey/"];
+const CACHE = "pocketgm-hub-v3";
+const GAMES = ["soccer/", "baseball/", "hockey/"].map(g => new URL(g, self.registration.scope).pathname);
 const SHELL = [
-  "/",
-  "/index.html",
-  "/saves.js",
-  "/manifest.json",
-  "/icon-192.png",
-  "/icon-512.png",
-  "/apple-touch-icon.png",
+  "./",
+  "index.html",
+  "saves.js",
+  "manifest.json",
+  "icon-192.png",
+  "icon-512.png",
+  "apple-touch-icon.png",
 ];
 
 self.addEventListener("install", e => {
@@ -45,6 +46,6 @@ self.addEventListener("fetch", e => {
         caches.open(CACHE).then(c => c.put(e.request, clone));
         return res;
       })
-      .catch(() => caches.match(e.request).then(hit => hit || caches.match("/index.html")))
+      .catch(() => caches.match(e.request).then(hit => hit || caches.match("index.html")))
   );
 });
