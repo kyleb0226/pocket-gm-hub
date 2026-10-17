@@ -38,12 +38,17 @@ function fetchGame({ slug, repo }) {
   if (LOCAL) {
     const src = path.join(os.homedir(), repo);
     if (!fs.existsSync(src)) throw new Error(`--local: ${src} not found`);
-    fs.cpSync(src, dest, { recursive: true });
+    // dereference: a symlinked checkout must be COPIED, never linked into dist —
+    // otherwise the prune below deletes .git/tools/CLAUDE.md from the real repo.
+    fs.cpSync(src, dest, { recursive: true, dereference: true });
     console.log(`  ${slug}: copied from ${src}`);
   } else {
     run("git", ["clone", "--depth", "1", "--quiet", `https://github.com/kyleb0226/${repo}.git`, dest]);
     const sha = run("git", ["-C", dest, "rev-parse", "--short", "HEAD"]).toString().trim();
     console.log(`  ${slug}: cloned ${repo}@${sha}`);
+  }
+  if (fs.lstatSync(dest).isSymbolicLink() || fs.realpathSync(dest) !== path.resolve(dest)) {
+    throw new Error(`${slug}: dist/${slug} resolves outside dist — refusing to prune through it`);
   }
   for (const junk of PRUNE) fs.rmSync(path.join(dest, junk), { recursive: true, force: true });
   if (!fs.existsSync(path.join(dest, "index.html"))) throw new Error(`${slug}: no index.html`);

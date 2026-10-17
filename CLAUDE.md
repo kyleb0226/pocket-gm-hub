@@ -56,6 +56,11 @@ The three games share `localStorage` and IndexedDB on this domain. Their keys do
 | soccer | `pgsoccer_slots`, `pgsoccer_slot_*` | `pgsoccer_db` |
 | baseball | `pocketgm_slots`, `pocketgm_slot_*`, `pocketgm_baseball_v2` | `pgbaseball_db` |
 | hockey | `pgmh:*` | `pgmh` |
+| hub (this menu) | `pgm-hub:*` (`pgm-hub:net` = per-game download log) | — |
+
+CacheStorage is shared too: `soccer-gm-*`, `baseball-gm-*`, `hockey-gm-*`, `pocketgm-hub-*`. **Every worker
+must only delete caches with its own prefix** when it activates. Each used to delete everything that wasn't its
+current cache, so opening any one game (or this menu) wiped the others' offline copies.
 
 **If you add a fourth game, check its keys against this table first.** A collision would let one
 game overwrite another's saves — the failure would look like "my franchise disappeared".
@@ -71,3 +76,23 @@ with `GAMES` in `build.js` when adding a game.
 
 Vercel project builds with `node build.js`, output `dist/`. Redeploying is what publishes new
 game versions — pushing to a game repo alone does nothing to this site.
+
+## Data & storage panel
+
+`site/index.html` → `#data`. Read-only, per game: saves & settings (localStorage by prefix + the game's
+IndexedDB), app files (its CacheStorage, plus hockey's compiled-code cache `pgmh:build:*`), save slots (each
+game's own slot index), and downloads (from `pgm-hub:net`, written by the meter script in each game's `<head>`;
+`transferSize` is 0 for cache hits, so only real network bytes count). Totals from `navigator.storage.estimate()`
+and a "protect my saves" button (`navigator.storage.persist()`). Refreshes on load, every 60s while visible, and
+when the tab comes back — deliberately not live.
+
+**Never `indexedDB.open()` a database that doesn't exist** — it creates it empty at version 1, and the game then
+never gets its upgrade event and has no object store. The panel checks `indexedDB.databases()` first and skips
+IndexedDB on browsers without it (marked `*`).
+
+## `--local` builds and symlinks
+
+`build.js` prunes `.git`, `tools`, `CLAUDE.md` etc. out of each copied game. If `~/<repo>` is a **symlink**, a
+plain copy reproduces the link and the prune deletes those files **from the real repo** (this happened once;
+recovered from the remote). `fetchGame` now copies with `dereference: true` and refuses to prune anything that
+resolves outside `dist/`.

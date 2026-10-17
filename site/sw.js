@@ -6,7 +6,10 @@
  * opened. Passing through (no respondWith) leaves the browser's default fetch in
  * charge, so the hub can never serve a stale copy of a game.
  */
-const CACHE = "pocketgm-hub-v1";
+const CACHE = "pocketgm-hub-v2";
+// The three games and the menu share ONE origin on the hub, so they share CacheStorage.
+// Activation clears only OUR old versions ("pocketgm-hub-*"); deleting every other cache wiped
+// the sibling games' offline copies each time any one of them updated.
 const GAMES = ["/soccer/", "/baseball/", "/hockey/"];
 const SHELL = [
   "/",
@@ -26,7 +29,7 @@ self.addEventListener("install", e => {
 self.addEventListener("activate", e => {
   e.waitUntil(
     caches.keys()
-      .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
+      .then(keys => Promise.all(keys.filter(k => k !== CACHE && k.indexOf("pocketgm-hub-") === 0).map(k => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });

@@ -106,6 +106,24 @@
   }
   #install:active { filter: brightness(.93); }
 
+
+  /* Data & storage */
+  .meter-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .meter-head small { color: var(--muted); font-size: 12px; }
+  .refresh { font: inherit; font-size: 12px; color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 8px; padding: 3px 9px; cursor: pointer; }
+  .apps { display: grid; gap: 10px; margin-top: 14px; }
+  .app { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; border-left: 3px solid var(--accent); }
+  .app-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .app-top b { font-size: 15px; }
+  .app-top span { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .bar { height: 6px; border-radius: 4px; background: var(--card-hi); margin: 8px 0 6px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
+  .facts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 2px 14px; font-size: 13px; color: var(--muted); }
+  @media (min-width: 640px) { .facts { grid-template-columns: repeat(4, 1fr); } }
+  .facts em { font-style: normal; color: var(--text); font-variant-numeric: tabular-nums; }
+  .totals { margin-top: 14px; font-size: 13px; color: var(--muted); }
+  .totals em { font-style: normal; color: var(--text); }
+  #persist { margin-top: 10px; font: inherit; font-size: 13px; font-weight: 600; color: var(--text); background: var(--card-hi); border: 1px solid var(--line); border-radius: 10px; padding: 7px 12px; cursor: pointer; }
   footer { margin-top: 30px; text-align: center; color: var(--muted); font-size: 13px; }
   footer a { color: var(--muted); }
   .note { margin-top: 10px; font-size: 13px; color: var(--muted); }
@@ -173,6 +191,18 @@
     <p class="note" id="installed-note" hidden>Installed — look for the Pocket GM icon on your home screen.</p>
   </section>
 
+
+  <section class="panel" id="data">
+    <div class="meter-head">
+      <h3>Data &amp; storage</h3>
+      <small><span id="d-updated">Measuring…</span> <button class="refresh" id="d-refresh" type="button">Refresh</button></small>
+    </div>
+    <p>Everything the games save lives on this device. This is how much each one is keeping, and how much it has downloaded. Updates every minute and whenever you come back to this page.</p>
+    <div class="apps" id="d-apps"></div>
+    <div class="totals" id="d-totals"></div>
+    <button id="persist" type="button" hidden>Protect my saves from being cleared</button>
+  </section>
+
   <footer>
     Source:
     <a href="https://github.com/kyleb0226/soccer-gm">soccer</a> ·
@@ -207,6 +237,144 @@
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js'));
   }
+
+  /* ---------------- Data & storage ----------------
+   * Read-only. Each game's data is told apart by its key prefix / database / cache name
+   * (the same table as CLAUDE.md "Why one origin is safe"). Download totals come from the
+   * small meter script in each game, which records page-load transfer into "pgm-hub:net".
+   * IndexedDB is only opened if indexedDB.databases() says the database already exists:
+   * opening a missing one would CREATE it empty, and the game would then never get its
+   * object store (no upgrade event) — so on browsers without databases() it's skipped. */
+  const APPS = [
+    // `index` reads the game's own slot list; `appKey` marks localStorage entries that are
+    // app files rather than saves (hockey caches its compiled code there).
+    { slug: "soccer",   name: "Soccer",   accent: "var(--soccer)",   ls: ["pgsoccer_"], idb: ["pgsoccer_db"],   cache: "soccer-gm",
+      slots: () => jsonLen("pgsoccer_slots") },
+    { slug: "baseball", name: "Baseball", accent: "var(--baseball)", ls: ["pocketgm_"], idb: ["pgbaseball_db"], cache: "baseball-gm",
+      slots: () => jsonLen("pocketgm_slots") },
+    { slug: "hockey",   name: "Hockey",   accent: "var(--hockey)",   ls: ["pgmh:"],     idb: ["pgmh"],          cache: "hockey-gm",
+      slots: () => countKeys(/^pgmh:meta\d/), appKey: k => k.indexOf("pgmh:build:") === 0 },
+    { slug: "hub",      name: "This menu",accent: "var(--muted)",    ls: ["pgm-hub:"],  idb: [],                cache: "pocketgm-hub",
+      slots: () => null },
+  ];
+  function jsonLen(k) { try { const v = JSON.parse(localStorage.getItem(k) || "[]"); return Array.isArray(v) ? v.length : Object.keys(v).length; } catch (e) { return 0; } }
+  function countKeys(re) { let n = 0; try { for (let i = 0; i < localStorage.length; i++) if (re.test(localStorage.key(i))) n++; } catch (e) {} return n; }
+  const fmt = n => n == null ? "—" : n < 1024 ? n + " B" : n < 1048576 ? (n / 1024).toFixed(1) + " KB" : (n / 1048576).toFixed(n < 10485760 ? 2 : 1) + " MB";
+  const ago = t => { if (!t) return "never"; const m = Math.round((Date.now() - t) / 60000);
+    return m < 1 ? "just now" : m < 60 ? m + " min ago" : m < 1440 ? Math.round(m / 60) + " h ago" : Math.round(m / 1440) + " d ago"; };
+  const valueBytes = v => { if (v == null) return 0; if (typeof v === "string") return v.length * 2;
+    if (v instanceof Blob) return v.size; try { return JSON.stringify(v).length * 2; } catch (e) { return 0; } };
+
+  function localBytes() {
+    const out = {}; APPS.forEach(a => out[a.slug] = { bytes: 0, app: 0, slots: a.slots() });
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i), v = localStorage.getItem(k) || "";
+        const a = APPS.find(x => x.ls.some(p => k.indexOf(p) === 0));
+        if (!a) continue;
+        const b = (k.length + v.length) * 2;                  // localStorage stores UTF-16
+        if (a.appKey && a.appKey(k)) out[a.slug].app += b; else out[a.slug].bytes += b;
+      }
+    } catch (e) {}
+    return out;
+  }
+  async function idbBytes(name) {
+    if (!window.indexedDB || !indexedDB.databases) return null;
+    const list = await indexedDB.databases().catch(() => []);
+    if (!list.some(d => d.name === name)) return 0;
+    return new Promise(res => {
+      const req = indexedDB.open(name);
+      req.onerror = () => res(null);
+      req.onsuccess = () => {
+        const db = req.result; const stores = Array.from(db.objectStoreNames);
+        if (!stores.length) { db.close(); return res(0); }
+        let total = 0; const tx = db.transaction(stores, "readonly");
+        stores.forEach(st => { tx.objectStore(st).openCursor().onsuccess = e => {
+          const c = e.target.result; if (c) { total += valueBytes(c.value) + valueBytes(c.key); c.continue(); } }; });
+        tx.oncomplete = () => { db.close(); res(total); };
+        tx.onerror = () => { db.close(); res(null); };
+      };
+    });
+  }
+  async function cacheBytes() {
+    const out = {}; APPS.forEach(a => out[a.slug] = 0);
+    if (!window.caches) return out;
+    try {
+      for (const name of await caches.keys()) {
+        const a = APPS.find(x => name.indexOf(x.cache) === 0); if (!a) continue;
+        const c = await caches.open(name);
+        for (const req of await c.keys()) { const r = await c.match(req); if (r) out[a.slug] += (await r.clone().blob()).size; }
+      }
+    } catch (e) {}
+    return out;
+  }
+  function netLog() {
+    let all = {}; try { all = JSON.parse(localStorage.getItem("pgm-hub:net") || "{}"); } catch (e) {}
+    // this menu page's own load, counted once per page view
+    try {
+      if (!window.__hubCounted) {
+        const n = performance.getEntriesByType("navigation").concat(performance.getEntriesByType("resource"));
+        const bytes = n.reduce((s, e) => s + (e.transferSize || 0), 0);
+        const r = all.hub || { total: 0, loads: 0 };
+        r.loads++; r.total += bytes; r.last = bytes; r.at = Date.now();
+        all.hub = r; window.__hubCounted = true;
+        localStorage.setItem("pgm-hub:net", JSON.stringify(all));
+      }
+    } catch (e) {}
+    return all;
+  }
+
+  let busy = false;
+  async function measure() {
+    if (busy) return; busy = true;
+    const ls = localBytes(), caches_ = await cacheBytes(), net = netLog();
+    const idb = {};
+    for (const a of APPS) {
+      let t = 0, unknown = false;
+      for (const n of a.idb) { const b = await idbBytes(n); if (b == null) unknown = true; else t += b; }
+      idb[a.slug] = unknown && t === 0 ? null : t;
+    }
+    const rows = APPS.map(a => {
+      const saved = ls[a.slug].bytes + (idb[a.slug] || 0), offline = caches_[a.slug] + ls[a.slug].app;
+      return { a, saved, offline, total: saved + offline, n: net[a.slug] || null, slots: ls[a.slug].slots };
+    });
+    const max = Math.max(1, ...rows.map(r => r.total));
+    document.getElementById("d-apps").innerHTML = rows.map(({ a, saved, offline, total, n, slots }) => `
+      <div class="app" style="--accent:${a.accent}">
+        <div class="app-top"><b>${a.name}</b><span>${fmt(total)}</span></div>
+        <div class="bar"><i style="width:${Math.max(total ? 2 : 0, Math.round(total / max * 100))}%"></i></div>
+        <div class="facts">
+          <div>Saves &amp; settings <em>${fmt(saved)}</em>${idb[a.slug] == null && a.idb.length ? " <span title='This browser can't list its databases, so the IndexedDB copy isn't counted'>*</span>" : ""}</div>
+          <div title="The game's own files, kept so it opens offline and loads fast">App files <em>${fmt(offline)}</em></div>
+          <div>Downloaded <em>${n ? fmt(n.total) : "—"}</em>${n ? ` over ${n.loads} visit${n.loads === 1 ? "" : "s"}` : ""}</div>
+          <div>Last visit <em>${n ? fmt(n.last) : "—"}</em> · ${n ? ago(n.at) : "not opened yet"}</div>
+          ${slots != null ? `<div>Save slots <em>${slots}</em></div>` : ""}
+        </div>
+      </div>`).join("");
+    let line = "";
+    if (navigator.storage && navigator.storage.estimate) {
+      try { const e = await navigator.storage.estimate();
+        line = `Browser storage for this site: <em>${fmt(e.usage)}</em> used of <em>${fmt(e.quota)}</em> available.`; } catch (e) {}
+    }
+    const dl = rows.reduce((s, r) => s + (r.n ? r.n.total : 0), 0);
+    line += ` Downloaded in total since tracking began: <em>${fmt(dl)}</em>. After the first visit, a game only re-downloads its own page (under 1 MB) to check for updates; everything else comes from the saved app files.`;
+    if (navigator.storage && navigator.storage.persisted) {
+      try { const p = await navigator.storage.persisted();
+        line += p ? " Your saves are protected from automatic clean-up." : " The browser may clear this data if the device runs low on space.";
+        document.getElementById("persist").hidden = p || !navigator.storage.persist; } catch (e) {}
+    }
+    document.getElementById("d-totals").innerHTML = line;
+    document.getElementById("d-updated").textContent = "Updated " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    busy = false;
+  }
+  document.getElementById("d-refresh").addEventListener("click", measure);
+  document.getElementById("persist").addEventListener("click", async () => {
+    try { await navigator.storage.persist(); } catch (e) {} measure(); });
+  // Not live: once on load, then every minute while the page is visible, and on return.
+  window.addEventListener("load", () => setTimeout(measure, 800));
+  setInterval(() => { if (document.visibilityState === "visible") measure(); }, 60000);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") measure(); });
+
 </script>
 </body>
 </html>
