@@ -17,7 +17,7 @@ function weatherFor(G, g){
   const cold = H.pro ? hk(H.id, "cold") < .45 : COLD.includes(H.state), late = g.w >= (H.pro ? 11 : 10);
   if (cold && late && r < .2) return "snow"; if (r < .13 + (cold ? 0 : .02)) return "rain"; if (r > .9) return "wind"; return "";
 }
-const crowdOf = (G, H) => H.fcs ? 0 : clamp(H.pro ? .55 + hk(H.id, "crowd") * .45 : (H.prestige - 40) / 55, .1, 1) + (isUser(G, H.id) ? ((G.fac || {}).stad || 0) * .08 : 0);
+const crowdOf = (G, H) => H.fcs ? 0 : clamp(H.pro ? .55 + hk(H.id, "crowd") * .45 : (H.prestige - 40) / 55, .1, 1) + (isUser(G, H.id) ? ((G.fac || {}).stad || 0) * .08 + ((G.fans == null ? 55 : G.fans) - 50) / 250 : 0);
 const OC_SCHEMES = { "Air Raid": .8, "Pro Style": .1, "Spread Option": -.25, "Ground & Pound": -.8 }, DC_SCHEMES = { "Blitz-Heavy": .8, "4-3 Base": 0, "Cover 2 Shell": -.7 };
 const defaultPlan = G => ({ pass: G.staff && G.staff.oc ? OC_SCHEMES[G.staff.oc.scheme] || 0 : 0, tempo: 0, blitz: G.staff && G.staff.dc ? DC_SCHEMES[G.staff.dc.scheme] || 0 : 0, fourth: 0 });
 function planOf(G, t){
@@ -25,7 +25,7 @@ function planOf(G, t){
   if (isUser(G, t.id)) return Object.assign(defaultPlan(G), G.plan || {});
   const h = k => (hk(hashSeed(t.coach ? t.coach.name : t.id) % 99991, k) - .5) * 1.2; return { pass: h("p"), tempo: h("t") * .6, blitz: h("b"), fourth: h("f") * .5 };
 }
-function gameOpts(G, g, extra){ const [H, A] = gameTeams(G, g); return Object.assign({ neutral: g.neutral, wx: weatherFor(G, g), crowd: crowdOf(G, H), plan: [planOf(G, H), planOf(G, A)] }, extra || {}); }
+function gameOpts(G, g, extra){ const [H, A] = gameTeams(G, g); return Object.assign({ neutral: g.neutral, era: G.era ? G.era.k : 0, wx: weatherFor(G, g), crowd: crowdOf(G, H), plan: [planOf(G, H), planOf(G, A)] }, extra || {}); }
 // Where each side has the edge, for the matchup card.
 function matchupEdges(G, g){
   const [H, A] = gameTeams(G, g), me = isUser(G, H.id) ? H : A, opp = me === H ? A : H, a = lineup(G, me, 0), b = lineup(G, opp, 0);
@@ -59,7 +59,7 @@ function staffOffseason(G){
   ensureStaff(G); const t = userTeam(G), wp = winPct(t);
   STAFF_ROLES(G).forEach(([k, label]) => { const c = G.staff[k]; c.age++; c.ovr = clamp(c.ovr + (c.age < 50 ? rint(0, 2) : rint(-1, 1)), 45, 97);
     if (k !== "rc" && k !== "sc" && c.ovr >= 80 && wp >= .68 && chance(.4)) { const open = (G.openJobs || []).map(id => T(G, id)).filter(x => x && !isUser(G, x.id)), to = open.length ? pick(open) : null;
-      if (to) { to.coach = { name: c.name, age: c.age, ovr: clamp(c.ovr - 6, 50, 92), w: 0, l: 0, ch: 0, aw: [], since: G.year + 1 }; news(G, `Your ${label.toLowerCase()} ${c.name} is the new head coach at ${to.name}. You'll need a replacement.`, "coach", G.uid); }
+      if (to) { (G.tree = G.tree || []).unshift({ name: c.name, role: label, y: G.year + 1, tid: to.id }); to.coach = { name: c.name, age: c.age, ovr: clamp(c.ovr - 6, 50, 92), w: 0, l: 0, ch: 0, aw: [], since: G.year + 1 }; news(G, `Your ${label.toLowerCase()} ${c.name} is the new head coach at ${to.name}. You'll need a replacement.`, "coach", G.uid); }
       else news(G, `Your ${label.toLowerCase()} ${c.name} leaves for a head coaching job. You'll need a replacement.`, "coach", G.uid);
       G.staff[k] = makeStaff(G, k, staffQuality(G) - 6); G.staff[k].interim = 1; }
     else if (c.age >= 68 && chance(.5)) { news(G, `${label} ${c.name} retires.`, "coach", G.uid); G.staff[k] = makeStaff(G, k, staffQuality(G) - 6); G.staff[k].interim = 1; } });
@@ -67,7 +67,7 @@ function staffOffseason(G){
 }
 
 /* ----------------------------- NIL (college) ----------------------------- */
-function nilReset(G){ const t = userTeam(G); if (t.pro) { G.nil = null; return; } const b = round(700 + t.prestige * 42 + ((t.hist[t.hist.length - 1] || { w: 6 }).w) * 70 + ((G.fac || {}).recruit || 0) * 250); G.nil = { budget: b, left: b, deals: {} }; }
+function nilReset(G){ const t = userTeam(G); if (t.pro) { G.nil = null; return; } const b = round(700 + t.prestige * 42 + ((t.hist[t.hist.length - 1] || { w: 6 }).w) * 70 + ((G.fac || {}).recruit || 0) * 250 + ((G.fans == null ? 55 : G.fans) - 50) * 18); G.nil = { budget: b, left: b, deals: {} }; }
 const nilPull = (p, amt) => amt ? 6.5 * Math.log2(1 + amt / 100) / (1 + Math.max(0, (p.stars || 3) - 3) * .2) : 0;
 // Once you clearly lead for a recruit he commits, and a commitment holds: no more money or pitches needed.
 function checkCommit(G, p){
@@ -96,7 +96,7 @@ function takeJob(G, tid){
 function jobReview(G){
   const t = userTeam(G), c = G.coach, row = t.hist[t.hist.length - 1] || {}, wp = (row.w + row.l) ? row.w / (row.w + row.l) : .5, exp = t.pro ? .5 : (t.prestige - 45) / 52 * .62 + .2;
   const title = /National Champions|Won Pocket Bowl/.test(row.post || ""), bonus = title ? 25 : t.pro ? (row.post ? 8 : 0) : (row.cc ? 8 : 0) + (/Won/.test(row.post || "") ? 3 : 0);
-  c.sec = clamp(round((c.sec == null ? 62 : c.sec) + (wp - exp) * (t.pro ? 75 : 95) + bonus), 0, 100); c.at = c.at || G.year;
+  c.sec = clamp(round((c.sec == null ? 62 : c.sec) + (wp - exp) * (t.pro ? 75 : 95) + bonus + ((G.fans == null ? 55 : G.fans) - 50) * .12), 0, 100); c.at = c.at || G.year;
   const years = G.year - c.at + 1, rep = coachRep(G), nm = x => x.pro ? "the " + x.city + " " + x.nick : x.name;
   G.events = G.events.filter(e => e.key !== "job");
   if (c.sec <= 8 && years >= 3) {
@@ -183,7 +183,7 @@ function combineBoard(G){
 function whatIf(G, n){
   const games = [...G.cs, ...G.ps].filter(g => g.done && !g.post && (g.h === G.uid || g.a === G.uid)).sort((a, b) => a.w - b.w); if (!games.length) return null;
   const wins = new Array(n).fill(0), rows = games.map(g => { const [H, A] = gameTeams(G, g), home = g.h === G.uid; let w = 0, pf = 0, pa = 0;
-    for (let k = 0; k < n; k++) { const r = simGame(G, H, A, { neutral: g.neutral, noInj: true, wx: g.wx || "", crowd: crowdOf(G, H), plan: [planOf(G, H), planOf(G, A)] }), me = r.sc[home ? 0 : 1], them = r.sc[home ? 1 : 0]; if (me > them) { w++; wins[k]++; } pf += me; pa += them; }
+    for (let k = 0; k < n; k++) { const r = simGame(G, H, A, { neutral: g.neutral, noInj: true, era: G.era ? G.era.k : 0, wx: g.wx || "", crowd: crowdOf(G, H), plan: [planOf(G, H), planOf(G, A)] }), me = r.sc[home ? 0 : 1], them = r.sc[home ? 1 : 0]; if (me > them) { w++; wins[k]++; } pf += me; pa += them; }
     return { gid: g.id, w: g.w, opp: home ? A : H, home, won: (home ? g.hs : g.as) > (home ? g.as : g.hs), us: home ? g.hs : g.as, them: home ? g.as : g.hs, p: w / n, pf: pf / n, pa: pa / n }; });
   const dist = new Array(games.length + 1).fill(0); wins.forEach(w => dist[w]++);
   const actual = rows.filter(r => r.won).length, exp = sum(rows, r => r.p);

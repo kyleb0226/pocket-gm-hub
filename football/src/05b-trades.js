@@ -21,7 +21,7 @@ function playerVal(p){
 // Every pick a team holds in the next draft: live slots once the board is set, otherwise projected.
 function teamPicks(G, tid){
   const d = G.draft;
-  if (d && !d.done) { const o = []; for (let i = d.pick; i < d.order.length; i++) if (d.order[i] === tid) o.push({ k: "s", i, rd: Math.ceil((i + 1) / 32), pk: i + 1, v: +pickVal(i + 1).toFixed(1), label: `Rd ${Math.ceil((i + 1) / 32)} · No. ${i + 1}` }); return o; }
+  if (d && !d.done) { const o = []; for (let i = d.pick; i < d.order.length; i++) if (d.order[i] === tid) o.push({ k: "s", i, rd: Math.ceil((i + 1) / 32), pk: i + 1, v: +pickVal(i + 1).toFixed(1), label: `${pickRound(i)} · No. ${i + 1}` }); return o; }
   if (G.phase === "off") return [];
   const base = G.pro.slice().sort((a, b) => winPct(a) - winPct(b) || (a.pf - a.pa) - (b.pf - b.pa)).map(t => t.id), own = G.pickOwn || {}, o = [];
   for (let r = 1; r <= 7; r++) base.forEach((orig, j) => { const holder = own[r + "-" + orig] != null ? own[r + "-" + orig] : orig; if (holder === tid) { const pk = (r - 1) * 32 + j + 1; o.push({ k: "f", rd: r, orig, pk, v: +(pickVal(pk) * .92).toFixed(1), label: `${G.year + 1} Rd ${r}` + (orig !== tid ? ` (via ${T(G, orig).abbr})` : "") }); } });

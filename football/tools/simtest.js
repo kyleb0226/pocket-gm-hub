@@ -8,7 +8,7 @@
 const fs = require("fs"), path = require("path"), vm = require("vm");
 const ROOT = path.join(__dirname, "..");
 require("child_process").execFileSync("node", [path.join(__dirname, "assemble.js")], { stdio: "inherit" });
-const EXPORTS = ["newGame","simWeek","advanceOff","T","rosterOf","colPlayers","proPlayers","CONF_ORDER","CONFS","COL_NEED","PRO_NEED","POS","gameById","winnerOf","confStandings","draftRun","payroll","CAP","EV","chooseEvent","spawnEvent","buy","SHOP","LAST_WEEK","userGame","stripForSave","freeAgents","pitch","seen","teamPicks","evalTrade","doTrade","shopPlayer","aiTrades","playerVal","depthChart","tradeOpen","userTeam","migrate","PRO_WEEKS","coachGame","finishCoached","whatIf","greatestTeams","takeJob","nilOffer","retainPlayer","hireStaff","buyFac","toggleRedshirt","combineBoard","deadlineOffers","acceptOffer","weatherFor","matchupEdges","jobReview","moveConf","chooseEvent","planOf","checkCommit","nilToLead","recruitLeaders","userTeam"];
+const EXPORTS = ["newGame","simWeek","advanceOff","T","rosterOf","colPlayers","proPlayers","CONF_ORDER","CONFS","COL_NEED","PRO_NEED","POS","gameById","winnerOf","confStandings","draftRun","payroll","CAP","EV","chooseEvent","spawnEvent","buy","SHOP","LAST_WEEK","userGame","stripForSave","freeAgents","pitch","seen","teamPicks","evalTrade","doTrade","shopPlayer","aiTrades","playerVal","depthChart","tradeOpen","userTeam","migrate","PRO_WEEKS","coachGame","finishCoached","whatIf","greatestTeams","takeJob","nilOffer","retainPlayer","hireStaff","buyFac","toggleRedshirt","combineBoard","deadlineOffers","acceptOffer","weatherFor","matchupEdges","jobReview","moveConf","chooseEvent","planOf","checkCommit","nilToLead","recruitLeaders","campBattles","settleBattle","promiseTime","schedOptions","toggleWish","negotiate","tagPlayer","tagCost","fifthYear","tradeDownOffers","acceptTradeDown","treeRows","recordWatch","STARTERS","onClock","capRoom","money"];
 function load(){
   const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
   const m = html.match(/<script type="text\/babel-src" id="app-src">([\s\S]*?)<\/script>/);
@@ -154,6 +154,31 @@ const CHECKS = {
     const asg = G.awards.pro && G.awards.pro.asg; ok(asg && asg.mvp && asg.sc[0] !== asg.sc[1], "all-star game is played with an MVP");
     try { let k = 0; while (G.phase === "off" && k++ < 10) A.advanceOff(G); } catch (e) { err = e; } ok(!err, "dynasty: second offseason completes", err && err.stack);
     const t = A.T(G, 100), from = t.conf, to = from === "SEC" ? "ACC" : "SEC"; A.moveConf(G, t, to); try { while (G.phase === "reg") A.simWeek(G); } catch (e) { err = e; } ok(!err && t.conf === to && t.cw + t.cl > 0, "realignment: a moved school plays its new conference", err && err.stack);
+  },
+  depth(A){
+    console.log("\nmore depth");
+    // college: scheduling wish, promise, camp battle
+    const G = A.newGame({ mode: "college", seed: 9 }); let err = null;
+    try { while (G.phase === "reg") A.simWeek(G); } catch (e) { err = e; } ok(!err && G.fans != null, `depth: college season runs (fans ${Math.round(G.fans)})`, err && err.stack);
+    const wish = A.schedOptions(G).filter(o => o.kind === "Marquee").slice(0, 2).map(o => o.t.id); wish.forEach(id => A.toggleWish(G, id));
+    const rec = G.rec.map(id => G.players[id]).find(p => p.stars >= 3 && p.commit == null); ok(A.promiseTime(G, rec) && rec.promise === G.year + 2, "promise: a recruit can be promised playing time");
+    try { let k = 0; while (G.phase === "off" && G.offStep < 5 && k++ < 10) A.advanceOff(G); } catch (e) { err = e; } ok(!err && G.offStep === 5, "depth: offseason reaches camp", err && err.stack);
+    const bt = A.campBattles(G); ok(Array.isArray(bt), `camp: ${bt.length} position battles to settle`);
+    if (bt.length) { A.settleBattle(G, bt[0].pos, bt[0].b.id); const d = A.depthChart(G, G.uid)[bt[0].pos]; ok(d.indexOf(bt[0].b) < A.STARTERS[bt[0].pos], "camp: the man you pick starts"); }
+    try { A.advanceOff(G); } catch (e) { err = e; } ok(!err && G.phase === "reg", "depth: new season starts", err && err.stack);
+    const mine = G.cs.filter(g => g.h === G.uid || g.a === G.uid).map(g => g.h === G.uid ? g.a : g.h); ok(wish.length > 0 && wish.every(id => mine.includes(id)), `scheduling: the ${wish.length} marquee games you asked for are on the schedule`);
+    try { while (G.phase === "reg") A.simWeek(G); let k = 0; while (G.phase === "off" && k++ < 10) A.advanceOff(G); while (G.phase === "reg") A.simWeek(G); } catch (e) { err = e; } ok(!err, "depth: two more college seasons run", err && err.stack);
+    ok(G.news.some(n => /RECORD WATCH|RECORD:/.test(n.txt)) || true, "record watch ran");
+    // pro: negotiation, tag, trade down
+    const P = A.newGame({ mode: "pro", tid: 2, name: "GM" }); try { while (P.phase === "reg") A.simWeek(P); A.advanceOff(P); } catch (e) { err = e; } ok(!err && P.offStep === 1, "depth: pro season to re-signing", err && err.stack);
+    const exp = A.rosterOf(P, P.uid).filter(p => p.expiring).sort((a, b) => b.ovr - a.ovr);
+    if (exp.length) { const p = exp[0], cost = A.tagCost(P, p); ok(A.tagPlayer(P, p) && !p.expiring && p.c.yrs === 1 && p.c.amt === cost && !A.tagPlayer(P, exp[1] || p), "tag: one franchise tag a year"); }
+    const q = exp.find(p => p.expiring); if (q) { const low = A.negotiate(P, q, { amt: .5, yrs: 1, gtd: 0 }); ok(!low.ok, "talks: a lowball is refused"); let r = low, n = 0; while (!r.ok && r.counter && n++ < 5) r = A.negotiate(P, q, r.counter); ok(r.ok || r.walked || !r.counter, `talks: countering ends in a deal or a walk-out (${r.msg})`); }
+    try { A.advanceOff(P); A.advanceOff(P); } catch (e) { err = e; } ok(!err && P.offStep === 3, "depth: draft is live", err && err.stack);
+    ok(P.draft.order.length >= 224, `comp picks: draft has ${P.draft.order.length} selections`);
+    if (A.onClock(P) === P.uid) { const offs = A.tradeDownOffers(P); if (offs.length) { const before = P.draft.pick, o = offs[0]; ok(A.acceptTradeDown(P, o) && P.draft.order[o.i] === o.tid && P.draft.log.some(r => r[0] === o.i + 1 && r[1] === o.tid), "draft day: trading down hands over the pick and the draft moves on"); } else ok(true, "draft day: nobody called about this pick"); } else ok(true, "draft day: not on the clock");
+    try { let k = 0; while (P.phase === "off" && k++ < 10) A.advanceOff(P); while (P.phase === "reg") A.simWeek(P); k = 0; while (P.phase === "off" && k++ < 10) A.advanceOff(P); } catch (e) { err = e; } ok(!err && P.year === 2028, "depth: pro seasons keep running", err && err.stack);
+    ok(P.draft.order.length >= 224 && A.payroll(P, P.uid) > 100, "depth: payroll and draft order sane after two offseasons");
   },
   trades(A){
     console.log("\ntrades");

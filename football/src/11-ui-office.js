@@ -56,13 +56,13 @@ function FreeAgentPanel(){
   const ui = useUI(), G = ui.G, [f, setF] = useState("All"), room = capRoom(G, G.uid), n = rosterOf(G, G.uid).length;
   const rows = freeAgents(G).filter(p => f === "All" || p.pos === f).slice(0, 50);
   return <Card title="Free agents" right={`${money(room)} cap room · ${n} on roster`}><PosFilter value={f} onChange={setF} />
-    <PTable rows={rows} empty="No free agents at that position." cols={[["Interest", p => <InterestBar v={faInterest(G, p, G.uid)} />], ["Asking", p => money(askFor(G, p, G.uid)) + "/yr"], ["", p => <span className="inline-flex gap-1"><Btn small onClick={() => ui.openInterview(p.id)}>Meet</Btn><Btn small kind="pri" disabled={askFor(G, p, G.uid) > room || n >= 58} onClick={() => { ui.act(G => signFA(G, p, G.uid, 2, askFor(G, p, G.uid))); ui.toast(`${pname(p)} signs for two years.`); }}>Sign</Btn></span>]]} /></Card>;
+    <PTable rows={rows} empty="No free agents at that position." cols={[["Interest", p => <InterestBar v={faInterest(G, p, G.uid)} />], ["Asking", p => money(askFor(G, p, G.uid)) + "/yr"], ["", p => <span className="inline-flex gap-1"><Btn small onClick={() => ui.openInterview(p.id)}>Meet</Btn><NegoBtn p={p} /><Btn small kind="pri" disabled={askFor(G, p, G.uid) > room || n >= 58} onClick={() => { ui.act(G => signFA(G, p, G.uid, 2, askFor(G, p, G.uid))); ui.toast(`${pname(p)} signs for two years.`); }}>Sign</Btn></span>]]} /></Card>;
 }
 function ResignPanel(){
   const ui = useUI(), G = ui.G, rows = rosterOf(G, G.uid).filter(p => p.expiring).sort((a, b) => b.ovr - a.ovr), d = depthChart(G, G.uid);
   return <Card title="Expiring contracts" right={money(capRoom(G, G.uid)) + " cap room"}>
-    <div className="text-xs text-slate-400 mb-2">Anyone you don't re-sign here walks into free agency when you advance.</div>
-    <PTable rows={rows} empty={G.offStep > 1 ? "Re-signing is closed for this year." : "Nobody on your roster is out of contract."} cols={[["Role", p => d[p.pos].indexOf(p) < STARTERS[p.pos] ? "Starter" : "Depth"], ["Asking", p => money(askOf(G, p)) + "/yr"], ["", p => <span className="inline-flex gap-1">{[1, 3].map(y => <Btn key={y} small kind={y === 3 ? "pri" : undefined} onClick={() => ui.act(G => resign(G, p, y))}>{y} yr</Btn>)}</span>]]} /></Card>;
+    <div className="text-xs text-slate-400 mb-2">Anyone you don't re-sign here walks into free agency when you advance. Quick-sign at his asking price, negotiate years and guarantees, use your one franchise tag, or pick up a first-rounder's fifth-year option.</div>
+    <PTable rows={rows} empty={G.offStep > 1 ? "Re-signing is closed for this year." : "Nobody on your roster is out of contract."} cols={[["Role", p => d[p.pos].indexOf(p) < STARTERS[p.pos] ? "Starter" : "Depth"], ["Asking", p => money(askOf(G, p)) + "/yr"], ["", p => <span className="inline-flex gap-1">{[1, 3].map(y => <Btn key={y} small kind={y === 3 ? "pri" : undefined} onClick={() => ui.act(G => resign(G, p, y))}>{y} yr</Btn>)}<NegoBtn p={p} /><TagBtns p={p} /></span>]]} /></Card>;
 }
 function DraftPanel(){
   const ui = useUI(), G = ui.G, d = G.draft, [f, setF] = useState("All");
@@ -116,7 +116,7 @@ function SeasonReview(){
 }
 function OfficeTab(){
   const ui = useUI(), G = ui.G, pro = G.mode === "pro", off = G.phase === "off", s = G.offStep;
-  const tabs = pro ? (off ? ["Re-sign", "Free agents", "Trades", "Draft", "Cap"] : ["Draft", "Trades", "Free agents", "Cap"]) : ["Recruiting", "Portal", "Draft", "Class ranks"];
+  const tabs = pro ? (off ? ["Re-sign", "Free agents", "Trades", "Draft", "Cap"] : ["Draft", "Trades", "Free agents", "Cap"]) : ["Recruiting", "Portal", "Draft", "Schedule", "Class ranks"];
   const start = pro ? (off ? ["Re-sign", "Re-sign", "Free agents", "Draft", "Free agents", "Cap"][s] : "Draft") : (off ? ["Recruiting", "Recruiting", "Recruiting", "Draft", "Recruiting", "Class ranks"][s] : "Draft");
   const [tab, setTab] = useState(start);
   const tips = pro ? ["Look back on the year, then advance to open contract talks.", "Re-sign the players you want to keep. Everyone else hits the market when you advance.", "Shop the free-agent market. The draft begins when you advance.", "The draft is live. Make your picks; advancing lets your scouts finish it for you.", "College Signing Day happens around the league. Free agents are still available.", "Camp opens. Advancing develops every player and starts the new season."]
@@ -124,6 +124,7 @@ function OfficeTab(){
   return (<div className="space-y-3">
     {off && <div className="card p-3"><div className="flex gap-1.5 mb-2">{OFF_STEPS.map((x, i) => <div key={x} className="flex-1"><div className={cx("h-1.5 rounded-full", i < s ? "bg-acc" : i === s ? "bg-acc sheen" : "bg-slate-800")} /><div className={cx("text-[9px] sm:text-[10px] mt-1 truncate", i === s ? "text-slate-100 font-bold" : "text-slate-500")}>{x}</div></div>)}</div><div className="text-sm text-slate-300">{tips[s]}</div></div>}
     {off && s === 0 && <SeasonReview />}
+    {off && s === 5 && <CampCard />}
     <SubTabs tabs={tabs} value={tab} onChange={setTab} />
     {tab === "Re-sign" && <ResignPanel />}
     {tab === "Free agents" && <FreeAgentPanel />}
@@ -133,6 +134,7 @@ function OfficeTab(){
     {tab === "Recruiting" && <RecruitPanel />}
     {tab === "Portal" && <RecruitPanel portal />}
     {tab === "Class ranks" && <ClassRanks />}
+    {tab === "Schedule" && <SchedulePicker />}
   </div>);
 }
 

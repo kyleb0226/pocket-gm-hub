@@ -367,7 +367,7 @@ function simGame(G, H, A, o = {}){
   const sc = [0, 0], q = [[0, 0, 0, 0, 0], [0, 0, 0, 0, 0]], smry = [], flow = [[0, 0]], pbp = o.pbp ? [] : null;
   const tot = [{ pl: 0, yd: 0, py: 0, ry: 0, to: 0, fd: 0 }, { pl: 0, yd: 0, py: 0, ry: 0, to: 0, fd: 0 }];
   let clock = 0, ot = 0, asked = 0;
-  const PL = o.plan || [{}, {}], wx = o.wx || "", WX = { rain: [.03, .03, 1.6, .03], wind: [.02, .08, 1, .04], snow: [.045, .05, 1.5, .06] }[wx] || [0, 0, 1, 0], crowd = o.neutral ? 0 : (o.crowd || 0), calls = o.calls || [];
+  const ERA = o.era || 0, PL = o.plan || [{}, {}], wx = o.wx || "", WX = { rain: [.03, .03, 1.6, .03], wind: [.02, .08, 1, .04], snow: [.045, .05, 1.5, .06] }[wx] || [0, 0, 1, 0], crowd = o.neutral ? 0 : (o.crowd || 0), calls = o.calls || [];
   // A decision only the user can make: answer from the list, or stop the sim and ask.
   const ask = info => { if (calls.length) return calls.shift(); if (o.ask && asked < 6) { asked++; throw { _need: Object.assign(info, { sc: sc.slice(), clock, last: pbp ? pbp.slice(-4).map(x => x[3]) : [] }) }; } return null; };
   const nm = p => p ? p.fn[0] + ". " + p.ln : "Team";
@@ -393,12 +393,12 @@ function simGame(G, H, A, o = {}){
         }
       }
       if (crowd && i === 1 && chance(crowd * .012)) { const back = Math.min(5, y - 1); y -= back; togo += back; log(i, y, "False start — the crowd is deafening", ""); }
-      let pPass = .56 + (togo > 7 && down > 1 ? .17 : 0) - (togo <= 2 ? .2 : 0) + (O.passOff - O.runOff) * .004 + (pl.pass || 0) * .09 - WX[3];
+      let pPass = .56 + (togo > 7 && down > 1 ? .17 : 0) - (togo <= 2 ? .2 : 0) + (O.passOff - O.runOff) * .004 + (pl.pass || 0) * .09 - WX[3] + ERA * .025;
       if (late) pPass += diff > 0 ? -.2 : diff < 0 ? .15 : 0;
       tot[i].pl++;
       let gain = 0, to = false, td = false, inc = false, txt = ""; const qb = O.qb;
       if (chance(clamp(pPass, .15, .9))) {
-        if (chance(clamp(.054 + (D.rush - O.pblk) * .0026 + bl * .014, .02, .17))) {
+        if (chance(clamp(.054 + (D.rush - O.pblk) * .0026 + bl * .014 - ERA * .006, .02, .17))) {
           gain = -rint(3, 10); const d = wpick(D.rushers); add(qb, "sk"); add(d, "sck"); add(d, "tk"); add(d, "tfl"); add(pick(O.ol), "sal");
           txt = nm(qb) + " sacked by " + nm(d) + " for " + gain; if (chance(.07 * WX[2])) { to = true; add(d, "ff"); add(qb, "fum"); txt += ", FUMBLE — defense recovers"; }
         } else if (qb && chance(clamp((qb.r[3] - 52) * .0025, 0, .11))) {
@@ -406,10 +406,10 @@ function simGame(G, H, A, o = {}){
           if (y + gain >= 100) { td = true; add(qb, "rtd"); } else add(wpick(D.passTk), "tk");
         } else {
           const tgt = wpick(O.targets); add(qb, "pa"); add(tgt, "tg");
-          if (chance(clamp(.025 + (D.cover - (qb ? qb.r[1] : 50)) * .0009 + bl * .003, .008, .06))) {
+          if (chance(clamp(.025 + (D.cover - (qb ? qb.r[1] : 50)) * .0009 + bl * .003 - ERA * .003, .008, .06))) {
             to = true; const d = wpick(D.dbs); add(d, "int"); add(d, "pd"); add(qb, "pi"); txt = nm(qb) + " pass INTERCEPTED by " + nm(d);
             if (chance(.05)) { add(d, "dtd"); clock += 12; tot[i].to++; score(1 - i, 6, nm(d) + " interception return TD"); xp(1 - i, D); log(1 - i, 100, txt + " — returned for a TOUCHDOWN", "td"); return { end: "td" }; }
-          } else if (chance(clamp(.635 + (O.passOff - D.passDef) * .0075 - WX[0] - bl * .02, .36, .82))) {
+          } else if (chance(clamp(.635 + (O.passOff - D.passDef) * .0075 - WX[0] - bl * .02 + ERA * .018, .36, .84))) {
             let g = round(2 + -Math.log(1 - _rng()) * (9.9 + (O.passOff - D.passDef) * .07) * (1 + bl * .13)); if (tgt && tgt.pos === "RB") g = round(g * .65);
             gain = Math.min(g, 100 - y); add(qb, "pc"); add(qb, "py", gain); add(tgt, "rec"); add(tgt, "rcy", gain); tot[i].py += gain; txt = nm(qb) + " pass to " + nm(tgt) + " for " + gain;
             if (y + gain >= 100) { td = true; add(qb, "ptd"); add(tgt, "rctd"); } else add(wpick(D.passTk), "tk");
@@ -528,6 +528,9 @@ function buildColSchedule(G){
   // 2) non-conference rivalries, 3) random non-conference, 4) an FCS date for anyone still short.
   const cap = id => games[id] < 12;
   G.riv.forEach(r => { if (confOf(G, r.a) !== confOf(G, r.b) || confOf(G, r.a) === "IND") { if (cap(r.a) && cap(r.b)) addE(r.a, r.b, false, r.i); } else if (!has.has(key(r.a, r.b)) && cap(r.a) && cap(r.b) && games[r.a] < 11 && games[r.b] < 11) addE(r.a, r.b, false, r.i); });
+  // the user's requested non-conference dates come before the random ones
+  if (G.mode === "college") (G.ncWish || []).forEach(id => { const x = T(G, id); if (x && !x.pro && id !== G.uid && cap(G.uid) && cap(id) && (confOf(G, id) !== confOf(G, G.uid) || confOf(G, G.uid) === "IND")) addE(G.uid, id, false, rivOf(G.uid, id)); });
+  G.ncWish = [];
   for (let guard = 0; guard < 4000; guard++) {
     const open = shuffle(G.col.filter(t => cap(t.id))).sort((x, y) => games[x.id] - games[y.id]); if (!open.length) break;
     const a = open[0], c = open.slice(1).filter(b => (b.conf !== a.conf || a.conf === "IND") && !has.has(key(a.id, b.id)));
@@ -576,7 +579,7 @@ function buildProSchedule(G){
 
 /* ----------------------------- season start ----------------------------- */
 function startSeason(G){
-  G.gid = G.gid || 0; ensureStaff(G); G.ivLeft = 12 + (G.mode === "pro" ? staffBonus(G, "sc") + ((G.fac || {}).recruit || 0) : 0); G.offers = []; G.week = 1; G.phase = "reg"; G.offStep = 0;
+  G.gid = G.gid || 0; ensureStaff(G); G.recWatch = {}; G.nego = {}; G.camp = {}; G.ivLeft = 12 + (G.mode === "pro" ? staffBonus(G, "sc") + ((G.fac || {}).recruit || 0) : 0); G.offers = []; G.week = 1; G.phase = "reg"; G.offStep = 0;
   [...G.col, ...G.pro].forEach(t => { Object.assign(t, { w: 0, l: 0, cw: 0, cl: 0, dw: 0, dl: 0, pf: 0, pa: 0, res: [], streak: 0, rank: 0, rkHist: [], morale: 0 }); });
   for (const id in G.players) { const p = G.players[id]; p.st = {}; delete p.gl; if (p.inj) delete p.inj; }
   Object.values(G.confs).forEach(c => delete c.champ);
@@ -627,7 +630,7 @@ function playGame(G, g, pre){
   applyGame(G, g, r, { post: !!g.post, keepBox: user || big || !!g.post });
   if (g.riv != null) {
     const rv = G.riv.find(x => x.i === g.riv), win = g.hs > g.as ? g.h : g.a;
-    if (rv) { win === rv.a ? rv.aw++ : rv.bw++; rv.holder = win; rv.last.unshift([G.year, g.h, g.hs, g.a, g.as]); if (rv.last.length > 12) rv.last.length = 12;
+    if (rv) { win === rv.a ? rv.aw++ : rv.bw++; rv.holder = win; rv.last.unshift([G.year, g.h, g.hs, g.a, g.as]); if (rv.last.length > 40) rv.last.length = 40;
       if (user) news(G, `${T(G, win).name} wins the ${rv.name} and takes home the ${rv.trophy}.`, "riv", win); }
   }
   if (!H.pro && !A.fcs) { const fav = H.rkAll < A.rkAll ? H : A, dog = fav === H ? A : H, dogWon = (dog === H) === (g.hs > g.as);
@@ -648,6 +651,7 @@ function simWeek(G){
   G.ps.filter(g => g.w === w && !g.done).forEach(g => playGame(G, g));
   for (const id in G.players) { const p = G.players[id]; if (p.inj) { p.st.gm = (p.st.gm || 0) + 1; if (--p.inj <= 0) delete p.inj; } }
   resolvePicks(G, w);
+  fanWeek(G, w); recordWatch(G, w);
   if (G.mode === "pro" && w >= 4 && w < TRADE_DEADLINE) deadlineOffers(G);
   if (w === TRADE_DEADLINE) { G.offers = []; aiTrades(G, 4); news(G, "The pro trade deadline has passed. Rosters are set until the offseason.", "pro"); }
   // College side of the calendar.
@@ -978,18 +982,20 @@ const awardScore = (p, pro) => sum(p.aw, ([, a]) => pro
   : (a === "Heisman Trophy" ? 30 : /All-American$/.test(a) && !/Second|Freshman/.test(a) ? 12 : a === "Second-team All-American" ? 5 : /Award|Trophy$|Golden Arm/.test(a) && !/finalist|Joe Moore/.test(a) ? 10 : /^First-team All-/.test(a) ? 2 : 0));
 const notable = p => p.hof || p.chof || awardScore(p, false) >= 10 || awardScore(p, true) >= 4 || (p.exp || 0) >= 7;
 function retire(G, p, why){
+  honourPro(G, p);
   p.ret = G.year; p.tid = null; delete p.fa; delete p.c; G._ros = null;
   if (p.exp != null && awardScore(p, true) + (careerTotals(p, "P").g || 0) / 16 >= 45 && !p.hof) { p.hof = G.year; G.hof.push(p.id); news(G, `${pname(p)} (${p.pos}) retires and is headed for the Pro Hall of Fame.`, "hof"); }
   if (!notable(p)) dropP(G, p);
 }
 function leaveCollege(G, p){
+  honourCol(G, p);
   if (awardScore(p, false) >= 34 && !p.chof) { p.chof = G.year; G.colHof.push(p.id); }
   p.col = p.tid; delete p.portal; delete p.stay;
 }
-const payroll = (G, tid) => sum(rosterOf(G, tid), p => p.c ? p.c.amt : 0);
+const payroll = (G, tid) => sum(rosterOf(G, tid), p => p.c ? p.c.amt : 0) + ((G.dead && G.dead[tid]) || 0);
 const capRoom = (G, tid) => CAP - payroll(G, tid);
 const askOf = (G, p) => +Math.max(.9, salaryFor(p) * (G.capK || 1)).toFixed(2);
-function toFA(G, p){ p.fa = 1; p.tid = null; delete p.c; G._ros = null; }
+function toFA(G, p){ if (p.tid != null) p.lastT = p.tid; p.fa = 1; p.tid = null; delete p.c; G._ros = null; }
 
 function beginOffseason(G){
   archiveStats(G); seasonLP(G);
@@ -1008,7 +1014,8 @@ function beginOffseason(G){
   G.openJobs = fired.filter(t => !isUser(G, t.id)).map(t => t.id);
   G.openPro = [];
   G.pro.forEach(t => { if (isUser(G, t.id)) return; const h = t.hist.slice(-2); t.coach.age++; if (h.length === 2 && h.every(r => r.w <= 5) && G.year - t.coach.since >= 1) { const old = t.coach; G.openPro.push(t.id); t.coach = makeCoach(G, 68); t.coach.since = G.year + 1; news(G, `The ${t.nick} fire ${old.name}; ${t.coach.name} takes over.`, "coach", t.id); } });
-  jobReview(G); staffOffseason(G); realignment(G);
+  G.fans = clamp((G.fans == null ? 55 : G.fans) * .85 + 8 + (/National Champions|Won Pocket Bowl/.test((userTeam(G).hist[userTeam(G).hist.length - 1] || {}).post || "") ? 14 : 0), 0, 100);
+  jobReview(G); staffOffseason(G); realignment(G); eraShift(G); G.nego = {}; G.dead = {};
   // --- pro: retirements and expiring deals ---
   proPlayers(G).concat(Object.values(G.players).filter(p => p.fa)).forEach(p => {
     const old = p.age >= 38 || (p.age >= 35 && chance(.5)) || (p.age >= 31 && p.ovr < 72 && chance(.45)) || (p.fa && (p.age >= 29 || p.ovr < 64));
@@ -1026,7 +1033,7 @@ function beginOffseason(G){
   pool.sort((a, b) => draftValue(b) - draftValue(a));
   pool.slice(420).forEach(p => { p.ret = G.year; if (!notable(p)) dropP(G, p); });
   const order = G.pro.slice().sort((a, b) => { const d = t => { const r = (t.hist[t.hist.length - 1] || {}).post || ""; return r === "Won Pocket Bowl" ? 5 : r === "Lost Pocket Bowl" ? 4 : /Conf/.test(r) ? 3 : /Div/.test(r) ? 2 : /Wild/.test(r) ? 1 : 0; }; return d(a) - d(b) || winPct(a) - winPct(b); }).map(t => t.id);
-  G.draft = { pool: pool.slice(0, 420).map(p => p.id), order: applyPickOwn(G, order), pick: 0, log: [], done: false, rank: {} };
+  G.draft = { pool: pool.slice(0, 420).map(p => p.id), order: applyPickOwn(G, order).concat(compPicks(G)), pick: 0, log: [], done: false, rank: {} };
   G.draft.pool.forEach((id, i) => (G.draft.rank[id] = i + 1)); G.ivLeft = 30;
   // --- transfer portal entries ---
   G.portal = [];
@@ -1035,6 +1042,7 @@ function beginOffseason(G){
     const buried = i >= STARTERS[pos] && p.ovr >= 66 && p.cls >= 1, big = i < STARTERS[pos] && p.ovr >= 76 && t.prestige < 66;
     if ((buried && chance(.3)) || (big && chance(.35)) || chance(.012)) { p.portal = 1; G.portal.push(p.id); } }));
   });
+  promiseReview(G);
   genRecruits(G);
   G.pitchLeft = 15 + (G.bonusPitch || 0) + staffBonus(G, "rc"); G.bonusPitch = 0; G.pitches = {}; nilReset(G);
   if (G.mode === "pro") G.ivLeft += staffBonus(G, "sc") * 2 + ((G.fac || {}).recruit || 0) * 3;
@@ -1050,8 +1058,8 @@ function jobOffers(G){
 
 /* --- pro roster moves --- */
 function resign(G, p, yrs){ p.c = { amt: askOf(G, p), yrs: yrs || 3 }; delete p.expiring; p.tx.push([G.year, `Re-signed with the ${T(G, p.tid).nick} (${yrs || 3} yr, ${money(p.c.amt)})`]); }
-function releaseP(G, p){ p.tx.push([G.year, `Released by the ${T(G, p.tid).nick}`]); toFA(G, p); }
-function signFA(G, p, tid, yrs, amt){ const t = T(G, tid); p.c = { amt: amt || askOf(G, p), yrs: yrs || 2 }; delete p.fa; delete p.expiring; moveP(G, p, tid); if (p.exp == null) p.exp = 0; p.tx.push([G.year, `Signed with the ${t.nick} (${p.c.yrs} yr, ${money(p.c.amt)})`]); }
+function releaseP(G, p){ if (p.c && p.c.gtd) { G.dead = G.dead || {}; G.dead[p.tid] = +((G.dead[p.tid] || 0) + p.c.amt * p.c.gtd).toFixed(2); } p.tx.push([G.year, `Released by the ${T(G, p.tid).nick}`]); toFA(G, p); }
+function signFA(G, p, tid, yrs, amt){ const t = T(G, tid); if (G.phase === "off" && p.lastT != null && p.lastT !== tid && p.exp) { const v = playerVal(p); G.faNet = G.faNet || {}; G.faNet[p.lastT] = (G.faNet[p.lastT] || 0) - v; G.faNet[tid] = (G.faNet[tid] || 0) + v; } p.c = { amt: amt || askOf(G, p), yrs: yrs || 2 }; delete p.fa; delete p.expiring; moveP(G, p, tid); if (p.exp == null) p.exp = 0; p.tx.push([G.year, `Signed with the ${t.nick} (${p.c.yrs} yr, ${money(p.c.amt)})`]); }
 const freeAgents = G => Object.values(G.players).filter(p => p.fa).sort((a, b) => b.ovr - a.ovr);
 function aiResign(G){
   proPlayers(G).filter(p => p.expiring).forEach(p => {
@@ -1136,7 +1144,7 @@ function genRecruits(G){
   G.rec.forEach((id, i) => (G.players[id].rk = i + 1));
 }
 const homeBonus = (p, t) => { const st = p.home.slice(-2); return st === t.state ? 9 : REGION[st] && REGION[st] === REGION[t.state] ? 4 : 0; };
-function schoolPull(G, p, t, noise){ return t.prestige + homeBonus(p, t) + (noise ? gauss(0, 6) : 0) + (isUser(G, t.id) ? (G.pitches[p.id] || 0) * (G.scouted[p.id] ? 13 : 10) + (G.perks.rec || 0) * 2 + nilPull(p, G.nil && G.nil.deals[p.id]) + ((G.fac || {}).recruit || 0) : 0) + prioBonus(p, t) + (t.coach.ovr - 60) * .08; }
+function schoolPull(G, p, t, noise){ return t.prestige + homeBonus(p, t) + (noise ? gauss(0, 6) : 0) + (isUser(G, t.id) ? (G.pitches[p.id] || 0) * (G.scouted[p.id] ? 13 : 10) + (G.perks.rec || 0) * 2 + nilPull(p, G.nil && G.nil.deals[p.id]) + ((G.fac || {}).recruit || 0) + (p.promise && p.promiseBy === t.id ? 8 : 0) - (G.brokenWord === G.year + 1 ? 3 : 0) : 0) + prioBonus(p, t) + (t.coach.ovr - 60) * .08; }
 // The three schools most likely to land a recruit, as things stand (no luck applied).
 function recruitLeaders(G, p){
   const open = G.col.filter(t => t.id !== p.tid && rosterOf(G, t.id).filter(x => x.pos === p.pos && !x.portal).length + (G._signed && G._signed[t.id + p.pos] || 0) < COL_NEED[p.pos] + (p.portal ? 1 : 0));
@@ -1224,7 +1232,7 @@ function playerVal(p){
 // Every pick a team holds in the next draft: live slots once the board is set, otherwise projected.
 function teamPicks(G, tid){
   const d = G.draft;
-  if (d && !d.done) { const o = []; for (let i = d.pick; i < d.order.length; i++) if (d.order[i] === tid) o.push({ k: "s", i, rd: Math.ceil((i + 1) / 32), pk: i + 1, v: +pickVal(i + 1).toFixed(1), label: `Rd ${Math.ceil((i + 1) / 32)} · No. ${i + 1}` }); return o; }
+  if (d && !d.done) { const o = []; for (let i = d.pick; i < d.order.length; i++) if (d.order[i] === tid) o.push({ k: "s", i, rd: Math.ceil((i + 1) / 32), pk: i + 1, v: +pickVal(i + 1).toFixed(1), label: `${pickRound(i)} · No. ${i + 1}` }); return o; }
   if (G.phase === "off") return [];
   const base = G.pro.slice().sort((a, b) => winPct(a) - winPct(b) || (a.pf - a.pa) - (b.pf - b.pa)).map(t => t.id), own = G.pickOwn || {}, o = [];
   for (let r = 1; r <= 7; r++) base.forEach((orig, j) => { const holder = own[r + "-" + orig] != null ? own[r + "-" + orig] : orig; if (holder === tid) { const pk = (r - 1) * 32 + j + 1; o.push({ k: "f", rd: r, orig, pk, v: +(pickVal(pk) * .92).toFixed(1), label: `${G.year + 1} Rd ${r}` + (orig !== tid ? ` (via ${T(G, orig).abbr})` : "") }); } });
@@ -1306,7 +1314,7 @@ function weatherFor(G, g){
   const cold = H.pro ? hk(H.id, "cold") < .45 : COLD.includes(H.state), late = g.w >= (H.pro ? 11 : 10);
   if (cold && late && r < .2) return "snow"; if (r < .13 + (cold ? 0 : .02)) return "rain"; if (r > .9) return "wind"; return "";
 }
-const crowdOf = (G, H) => H.fcs ? 0 : clamp(H.pro ? .55 + hk(H.id, "crowd") * .45 : (H.prestige - 40) / 55, .1, 1) + (isUser(G, H.id) ? ((G.fac || {}).stad || 0) * .08 : 0);
+const crowdOf = (G, H) => H.fcs ? 0 : clamp(H.pro ? .55 + hk(H.id, "crowd") * .45 : (H.prestige - 40) / 55, .1, 1) + (isUser(G, H.id) ? ((G.fac || {}).stad || 0) * .08 + ((G.fans == null ? 55 : G.fans) - 50) / 250 : 0);
 const OC_SCHEMES = { "Air Raid": .8, "Pro Style": .1, "Spread Option": -.25, "Ground & Pound": -.8 }, DC_SCHEMES = { "Blitz-Heavy": .8, "4-3 Base": 0, "Cover 2 Shell": -.7 };
 const defaultPlan = G => ({ pass: G.staff && G.staff.oc ? OC_SCHEMES[G.staff.oc.scheme] || 0 : 0, tempo: 0, blitz: G.staff && G.staff.dc ? DC_SCHEMES[G.staff.dc.scheme] || 0 : 0, fourth: 0 });
 function planOf(G, t){
@@ -1314,7 +1322,7 @@ function planOf(G, t){
   if (isUser(G, t.id)) return Object.assign(defaultPlan(G), G.plan || {});
   const h = k => (hk(hashSeed(t.coach ? t.coach.name : t.id) % 99991, k) - .5) * 1.2; return { pass: h("p"), tempo: h("t") * .6, blitz: h("b"), fourth: h("f") * .5 };
 }
-function gameOpts(G, g, extra){ const [H, A] = gameTeams(G, g); return Object.assign({ neutral: g.neutral, wx: weatherFor(G, g), crowd: crowdOf(G, H), plan: [planOf(G, H), planOf(G, A)] }, extra || {}); }
+function gameOpts(G, g, extra){ const [H, A] = gameTeams(G, g); return Object.assign({ neutral: g.neutral, era: G.era ? G.era.k : 0, wx: weatherFor(G, g), crowd: crowdOf(G, H), plan: [planOf(G, H), planOf(G, A)] }, extra || {}); }
 // Where each side has the edge, for the matchup card.
 function matchupEdges(G, g){
   const [H, A] = gameTeams(G, g), me = isUser(G, H.id) ? H : A, opp = me === H ? A : H, a = lineup(G, me, 0), b = lineup(G, opp, 0);
@@ -1348,7 +1356,7 @@ function staffOffseason(G){
   ensureStaff(G); const t = userTeam(G), wp = winPct(t);
   STAFF_ROLES(G).forEach(([k, label]) => { const c = G.staff[k]; c.age++; c.ovr = clamp(c.ovr + (c.age < 50 ? rint(0, 2) : rint(-1, 1)), 45, 97);
     if (k !== "rc" && k !== "sc" && c.ovr >= 80 && wp >= .68 && chance(.4)) { const open = (G.openJobs || []).map(id => T(G, id)).filter(x => x && !isUser(G, x.id)), to = open.length ? pick(open) : null;
-      if (to) { to.coach = { name: c.name, age: c.age, ovr: clamp(c.ovr - 6, 50, 92), w: 0, l: 0, ch: 0, aw: [], since: G.year + 1 }; news(G, `Your ${label.toLowerCase()} ${c.name} is the new head coach at ${to.name}. You'll need a replacement.`, "coach", G.uid); }
+      if (to) { (G.tree = G.tree || []).unshift({ name: c.name, role: label, y: G.year + 1, tid: to.id }); to.coach = { name: c.name, age: c.age, ovr: clamp(c.ovr - 6, 50, 92), w: 0, l: 0, ch: 0, aw: [], since: G.year + 1 }; news(G, `Your ${label.toLowerCase()} ${c.name} is the new head coach at ${to.name}. You'll need a replacement.`, "coach", G.uid); }
       else news(G, `Your ${label.toLowerCase()} ${c.name} leaves for a head coaching job. You'll need a replacement.`, "coach", G.uid);
       G.staff[k] = makeStaff(G, k, staffQuality(G) - 6); G.staff[k].interim = 1; }
     else if (c.age >= 68 && chance(.5)) { news(G, `${label} ${c.name} retires.`, "coach", G.uid); G.staff[k] = makeStaff(G, k, staffQuality(G) - 6); G.staff[k].interim = 1; } });
@@ -1356,7 +1364,7 @@ function staffOffseason(G){
 }
 
 /* ----------------------------- NIL (college) ----------------------------- */
-function nilReset(G){ const t = userTeam(G); if (t.pro) { G.nil = null; return; } const b = round(700 + t.prestige * 42 + ((t.hist[t.hist.length - 1] || { w: 6 }).w) * 70 + ((G.fac || {}).recruit || 0) * 250); G.nil = { budget: b, left: b, deals: {} }; }
+function nilReset(G){ const t = userTeam(G); if (t.pro) { G.nil = null; return; } const b = round(700 + t.prestige * 42 + ((t.hist[t.hist.length - 1] || { w: 6 }).w) * 70 + ((G.fac || {}).recruit || 0) * 250 + ((G.fans == null ? 55 : G.fans) - 50) * 18); G.nil = { budget: b, left: b, deals: {} }; }
 const nilPull = (p, amt) => amt ? 6.5 * Math.log2(1 + amt / 100) / (1 + Math.max(0, (p.stars || 3) - 3) * .2) : 0;
 // Once you clearly lead for a recruit he commits, and a commitment holds: no more money or pitches needed.
 function checkCommit(G, p){
@@ -1385,7 +1393,7 @@ function takeJob(G, tid){
 function jobReview(G){
   const t = userTeam(G), c = G.coach, row = t.hist[t.hist.length - 1] || {}, wp = (row.w + row.l) ? row.w / (row.w + row.l) : .5, exp = t.pro ? .5 : (t.prestige - 45) / 52 * .62 + .2;
   const title = /National Champions|Won Pocket Bowl/.test(row.post || ""), bonus = title ? 25 : t.pro ? (row.post ? 8 : 0) : (row.cc ? 8 : 0) + (/Won/.test(row.post || "") ? 3 : 0);
-  c.sec = clamp(round((c.sec == null ? 62 : c.sec) + (wp - exp) * (t.pro ? 75 : 95) + bonus), 0, 100); c.at = c.at || G.year;
+  c.sec = clamp(round((c.sec == null ? 62 : c.sec) + (wp - exp) * (t.pro ? 75 : 95) + bonus + ((G.fans == null ? 55 : G.fans) - 50) * .12), 0, 100); c.at = c.at || G.year;
   const years = G.year - c.at + 1, rep = coachRep(G), nm = x => x.pro ? "the " + x.city + " " + x.nick : x.name;
   G.events = G.events.filter(e => e.key !== "job");
   if (c.sec <= 8 && years >= 3) {
@@ -1472,7 +1480,7 @@ function combineBoard(G){
 function whatIf(G, n){
   const games = [...G.cs, ...G.ps].filter(g => g.done && !g.post && (g.h === G.uid || g.a === G.uid)).sort((a, b) => a.w - b.w); if (!games.length) return null;
   const wins = new Array(n).fill(0), rows = games.map(g => { const [H, A] = gameTeams(G, g), home = g.h === G.uid; let w = 0, pf = 0, pa = 0;
-    for (let k = 0; k < n; k++) { const r = simGame(G, H, A, { neutral: g.neutral, noInj: true, wx: g.wx || "", crowd: crowdOf(G, H), plan: [planOf(G, H), planOf(G, A)] }), me = r.sc[home ? 0 : 1], them = r.sc[home ? 1 : 0]; if (me > them) { w++; wins[k]++; } pf += me; pa += them; }
+    for (let k = 0; k < n; k++) { const r = simGame(G, H, A, { neutral: g.neutral, noInj: true, era: G.era ? G.era.k : 0, wx: g.wx || "", crowd: crowdOf(G, H), plan: [planOf(G, H), planOf(G, A)] }), me = r.sc[home ? 0 : 1], them = r.sc[home ? 1 : 0]; if (me > them) { w++; wins[k]++; } pf += me; pa += them; }
     return { gid: g.id, w: g.w, opp: home ? A : H, home, won: (home ? g.hs : g.as) > (home ? g.as : g.hs), us: home ? g.hs : g.as, them: home ? g.as : g.hs, p: w / n, pf: pf / n, pa: pa / n }; });
   const dist = new Array(games.length + 1).fill(0); wins.forEach(w => dist[w]++);
   const actual = rows.filter(r => r.won).length, exp = sum(rows, r => r.p);
@@ -1484,6 +1492,143 @@ function greatestTeams(G, pro, n){
   const rows = []; (pro ? G.pro : G.col).forEach(t => t.hist.forEach(h => { const g = Math.max(1, h.w + h.l), champ = /National Champions|Won Pocket Bowl/.test(h.post || ""), ru = /runner-up|Lost Pocket Bowl/.test(h.post || "");
     rows.push({ t, h, champ, s: h.w / g * 50 + ((h.pf || 0) - (h.pa || 0)) / g * 1.1 + (champ ? 22 : ru ? 8 : 0) + (h.cc ? 4 : 0) + (h.rk ? (26 - h.rk) * .5 : 0) + (!pro ? (t.prestige - 60) * .05 : 0) }); }));
   return rows.sort((a, b) => b.s - a.s).slice(0, n || 25);
+}
+
+/* ===== 05d-depth.js ===== */
+
+/* =========================================================================
+   More depth: camp battles, promises, scheduling wishes, contract talks,
+   tags and options, draft-day trade-downs, comp picks, fans, record watch,
+   coaching tree, ring of honour, eras
+   ========================================================================= */
+
+/* ----------------------------- camp battles ----------------------------- */
+// Starting jobs where the next man up is within three points: yours to settle in camp.
+function campBattles(G){
+  const d = depthChart(G, G.uid), out = [];
+  POS.forEach(pos => { const n = STARTERS[pos], a = d[pos][n - 1], b = d[pos][n]; if (a && b && !a.inj && !b.inj && Math.abs(a.ovr - b.ovr) <= 3) out.push({ pos, a, b }); });
+  return out;
+}
+const campNote = p => { const we = trait(p, "we"), up = p.pot - p.ovr; return we >= 4 && up >= 6 ? "First in, last out — and still getting better" : we >= 4 ? "Has outworked everyone in camp" : up >= 8 ? "Raw, but the flashes are loud" : we <= 2 ? "Coasting on talent so far" : p.age >= 30 || p.cls === 3 ? "The steady veteran hand" : "Solid, unspectacular camp"; };
+function settleBattle(G, pos, winId){
+  const ids = depthChart(G, G.uid)[pos].map(p => p.id), n = STARTERS[pos], i = ids.indexOf(winId); if (i < 0) return;
+  if (i >= n) [ids[n - 1], ids[i]] = [ids[i], ids[n - 1]];
+  (G.dc = G.dc || {})[pos] = ids; (G.camp = G.camp || {})[pos] = winId;
+}
+
+/* ----------------------------- playing-time promises (college) ----------------------------- */
+const openPromises = G => Object.values(G.players).filter(p => p.promise && (p.commit === G.uid || p.tid === G.uid || p.recruit || p.portal) && p.promiseBy === G.uid).length;
+function promiseTime(G, p){
+  if (p.promise || !(p.recruit || p.portal) || p.commit != null || openPromises(G) >= 3) return false;
+  p.promise = G.year + (p.portal ? 1 : 2); p.promiseBy = G.uid; checkCommit(G, p); return true;
+}
+// End of season: a promised starter who didn't start wants out; a promise kept is remembered.
+function promiseReview(G){
+  if (G.mode !== "college") return;
+  rosterOf(G, G.uid).forEach(p => { if (!p.promise || p.promiseBy !== G.uid || p.promise > G.year) return;
+    if ((p.st.gs || 0) >= 6) { delete p.promise; gainLP(G, 1, "a promise kept"); news(G, `You kept your word: ${p.pos} ${pname(p)} started as promised.`, "rec", G.uid); }
+    else { delete p.promise; delete p.stay; if (!p.portal && p.cls != null && p.cls < 3) { p.portal = 1; G.portal.push(p.id); } G.fans = clamp((G.fans || 55) - 3, 0, 100); G.coach.sec = clamp((G.coach.sec || 60) - 2, 0, 100);
+      news(G, `BROKEN PROMISE: ${p.pos} ${pname(p)} was told he'd start, didn't, and is in the portal. Recruits notice.`, "portal", G.uid); G.brokenWord = G.year + 1; } });
+}
+
+/* ----------------------------- scheduling wishes (college) ----------------------------- */
+function schedOptions(G){
+  const t = userTeam(G); if (t.pro) return [];
+  return G.col.filter(x => x.id !== t.id && (x.conf !== t.conf || t.conf === "IND")).map(x => ({ t: x, kind: x.prestige <= t.prestige - 14 ? "Cupcake" : x.prestige >= 84 && x.prestige >= t.prestige - 10 ? "Marquee" : x.prestige >= t.prestige - 5 ? "Even fight" : "Should win" })).sort((a, b) => b.t.prestige - a.t.prestige);
+}
+function toggleWish(G, tid){ G.ncWish = G.ncWish || []; const i = G.ncWish.indexOf(tid); if (i >= 0) G.ncWish.splice(i, 1); else if (G.ncWish.length < 3) G.ncWish.push(tid); }
+
+/* ----------------------------- contract talks (pro) ----------------------------- */
+const wantYears = p => p.age <= 28 ? 4 : p.age <= 30 ? 3 : p.age <= 32 ? 2 : 1;
+const baseAsk = (G, p) => p.fa ? askFor(G, p, G.uid) : askOf(G, p);
+// How the player's side scores an offer against what he's asking: 1.0 or better gets signed.
+function offerScore(G, p, o){ return o.amt * (1 + (o.gtd - .3) * .35) * (1 - Math.abs(o.yrs - wantYears(p)) * .045) / baseAsk(G, p); }
+function negotiate(G, p, o){
+  G.nego = G.nego || {}; const s = G.nego[p.id] || (G.nego[p.id] = { tries: 0 });
+  if (s.walked) return { ok: false, msg: "His agent isn't taking your calls any more this year." };
+  const room = capRoom(G, G.uid) + (p.tid === G.uid && p.c ? p.c.amt : 0); if (o.amt > room) return { ok: false, msg: `That doesn't fit: you have ${money(Math.max(0, room))} of room.` };
+  if (p.fa && rosterOf(G, G.uid).length >= 58) return { ok: false, msg: "Your roster is full." };
+  const lc = s.counter, meets = lc && o.amt >= lc.amt - .005 && o.gtd >= lc.gtd - .005 && o.yrs === lc.yrs, r = meets ? 1 : offerScore(G, p, o);
+  if (r >= 1 || (r >= .95 && chance(.5))) {
+    if (p.fa) signFA(G, p, G.uid, o.yrs, +o.amt.toFixed(2)); else { p.c = { amt: +o.amt.toFixed(2), yrs: o.yrs }; delete p.expiring; p.tx.push([G.year, `Re-signed with the ${T(G, p.tid).nick} (${o.yrs} yr, ${money(o.amt)})`]); }
+    p.c.gtd = +o.gtd.toFixed(2); delete G.nego[p.id];
+    return { ok: true, msg: r >= 1.12 ? "His agent says yes before you finish the sentence." : "Deal. He signs." };
+  }
+  s.tries++;
+  if (s.tries >= 4 || (r < .72 && chance(.6))) { s.walked = true; return { ok: false, walked: true, msg: r < .72 ? "Insulted, his agent hangs up. Talks are over for this year." : "Four rounds in, his side walks away from the table." }; }
+  const wy = wantYears(p), ask = baseAsk(G, p), c = { yrs: wy, gtd: .4, amt: +(ask * (1 - .035 * s.tries) / (1 + (.4 - .3) * .35)).toFixed(2) };
+  s.counter = c;
+  return { ok: false, counter: c, msg: r >= .9 ? "Close. They come back with a number." : o.yrs !== wy && Math.abs(o.yrs - wy) >= 2 ? `He wants a ${wy}-year deal, not ${o.yrs}.` : o.gtd < .2 ? "Not enough guaranteed. They counter." : "Too light. They counter." };
+}
+/* ----------------------------- franchise tag + fifth-year option ----------------------------- */
+function tagCost(G, p){ const top = proPlayers(G).filter(x => x.pos === p.pos && x.c).sort((a, b) => b.c.amt - a.c.amt).slice(0, 5); return +Math.max(askOf(G, p) * 1.15, avgOf(top, x => x.c.amt, 0)).toFixed(2); }
+function tagPlayer(G, p){ if (G.tagUsed === G.year || !p.expiring || p.tid !== G.uid) return false; p.c = { amt: tagCost(G, p), yrs: 1, tag: 1, gtd: 1 }; delete p.expiring; G.tagUsed = G.year; p.tx.push([G.year, `Franchise-tagged by the ${T(G, p.tid).nick} (${money(p.c.amt)})`]); news(G, `The ${T(G, p.tid).nick} place the franchise tag on ${p.pos} ${pname(p)}.`, "fa", p.tid); return true; }
+const canOption = p => !!(p.expiring && p.draft && p.draft.rd === 1 && !p.opt && (p.exp || 0) <= 4);
+function fifthYear(G, p){ if (!canOption(p)) return false; p.c = { amt: +(askOf(G, p) * .9).toFixed(2), yrs: 1, gtd: 1 }; p.opt = 1; delete p.expiring; p.tx.push([G.year, `Fifth-year option picked up (${money(p.c.amt)})`]); return true; }
+
+/* ----------------------------- draft day: offers to move down ----------------------------- */
+function tradeDownOffers(G){
+  const d = G.draft; if (!d || d.done || onClock(G) !== G.uid) return [];
+  const i = d.pick, v0 = pickVal(i + 1), out = [], seen = new Set();
+  for (let j = i + 2; j < Math.min(d.order.length, i + 34) && out.length < 3; j++) { const tid = d.order[j]; if (tid === G.uid || seen.has(tid)) continue; seen.add(tid);
+    if (hk(tid * 131 + i, "td") > .55) continue;                                   // not everyone wants up
+    const need = v0 * (1.02 + hk(tid + i, "tdp") * .2) - pickVal(j + 1); let k = -1, best = 1e9;
+    for (let x = j + 1; x < d.order.length; x++) if (d.order[x] === tid) { const diff = Math.abs(pickVal(x + 1) - need); if (diff < best) { best = diff; k = x; } }
+    if (k < 0 || pickVal(j + 1) + pickVal(k + 1) < v0 * .92) continue;
+    out.push({ tid, i, j, k, v: +(pickVal(j + 1) + pickVal(k + 1)).toFixed(1), v0: +v0.toFixed(1) }); }
+  return out;
+}
+function acceptTradeDown(G, o){
+  const d = G.draft; if (!d || d.pick !== o.i || d.order[o.j] !== o.tid || d.order[o.k] !== o.tid) return false;
+  d.order[o.i] = o.tid; d.order[o.j] = G.uid; d.order[o.k] = G.uid; const t = T(G, o.tid);
+  (G.trades = G.trades || []).unshift({ y: G.year, w: 0, a: G.uid, b: o.tid, ga: `pick No. ${o.i + 1}`, gb: `picks No. ${o.j + 1} and No. ${o.k + 1}` });
+  news(G, `DRAFT TRADE: the ${t.nick} move up to No. ${o.i + 1}, sending picks ${o.j + 1} and ${o.k + 1} to the ${userTeam(G).nick}.`, "draft", o.tid);
+  draftRun(G, false); return true;
+}
+/* ----------------------------- compensatory picks ----------------------------- */
+// Teams that lost more in free agency than they signed get extra picks after round seven.
+function compPicks(G){
+  const net = G.faNet || {}; G.faNet = {};
+  return G.pro.map(t => [t.id, net[t.id] || 0]).filter(x => x[1] <= -10).sort((a, b) => a[1] - b[1]).slice(0, 8).map(x => x[0]);
+}
+const pickRound = i => i >= 224 ? "Comp" : "Rd " + Math.ceil((i + 1) / 32);
+
+/* ----------------------------- fans and owner ----------------------------- */
+function fanWeek(G, w){
+  const g = [...G.cs, ...G.ps].find(x => x.w === w && x.done && (x.h === G.uid || x.a === G.uid)); if (!g) return;
+  const home = g.h === G.uid, won = (home ? g.hs : g.as) > (home ? g.as : g.hs), opp = T(G, home ? g.a : g.h), big = g.riv != null || (opp && opp.rank && opp.rank <= 10) || !!g.post;
+  G.fans = clamp((G.fans == null ? 55 : G.fans) + (won ? 2.2 : -2.6) * (big ? 1.8 : 1) + (50 - (G.fans == null ? 55 : G.fans)) * .02, 0, 100);
+}
+const fanLabel = f => f >= 80 ? ["Sold out every week", "#4ade80"] : f >= 62 ? ["Buzzing", "#a3e635"] : f >= 42 ? ["Showing up", "#fbbf24"] : f >= 25 ? ["Restless", "#fb923c"] : ["Empty seats", "#f87171"];
+const revenueOf = G => round(60 + (G.fans == null ? 55 : G.fans) * 1.4 + ((G.fac || {}).stad || 0) * 14 + (userTeam(G).pro ? 180 : userTeam(G).prestige * .9));
+
+/* ----------------------------- record watch ----------------------------- */
+function recordWatch(G, w){
+  if (w < 7) return; G.recWatch = G.recWatch || {};
+  [["col", colPlayers(G), COL_WEEKS - 2, "college"], ["pro", proPlayers(G), PRO_WEEKS, "pro"]].forEach(([lvl, pool, N, label]) => {
+    if (w > N + (lvl === "col" ? 2 : 0)) return;
+    REC_KEYS.forEach(([k, name]) => { const r = G.records[lvl][k]; if (!r || !r.v) return; let top = null; for (const p of pool) if ((p.st[k] || 0) > (top ? top.st[k] : 0)) top = p; if (!top || (top.st.g || 0) < 6) return;
+      const t = T(G, top.tid), key = lvl + k + top.id, v = top.st[k];
+      if (v > r.v && !G.recWatch[key + "b"]) { G.recWatch[key + "b"] = 1; news(G, `RECORD: ${t ? t.abbr + " " : ""}${top.pos} ${pname(top)} now has ${v.toLocaleString()} ${name.toLowerCase()}, breaking ${r.n}'s ${label} single-season mark of ${r.v.toLocaleString()} (${r.y}).`, "award", top.tid); if (isUser(G, top.tid)) gainLP(G, 3, "a record broken"); }
+      else if (v <= r.v && !G.recWatch[key] && v / top.st.g * N > r.v * 1.03) { G.recWatch[key] = 1; news(G, `RECORD WATCH: ${t ? t.abbr + " " : ""}${top.pos} ${pname(top)} is on pace for ${round(v / top.st.g * N).toLocaleString()} ${name.toLowerCase()}. The ${label} record is ${r.v.toLocaleString()} (${r.n}, ${r.y}).`, "award", top.tid); } }); });
+}
+
+/* ----------------------------- coaching tree ----------------------------- */
+function treeRows(G){
+  return (G.tree || []).map(x => { const t = T(G, x.tid), on = t && t.coach && t.coach.name === x.name; return Object.assign({}, x, { t: on ? t : null, w: on ? t.coach.w : null, l: on ? t.coach.l : null }); });
+}
+
+/* ----------------------------- ring of honour ----------------------------- */
+function honour(G, t, p){ if (!t || !p) return; t.ring = t.ring || []; if (t.ring.some(r => r.pid === p.id)) return; t.ring.unshift({ pid: p.id, n: pname(p), num: p.num, pos: p.pos, y: G.year }); if (t.ring.length > 40) t.ring.length = 40; if (isUser(G, t.id) || p.hof) news(G, `${t.pro ? "The " + t.nick : t.name} ${t.pro ? "retire" : "retires"} No. ${p.num} for ${pname(p)}.`, "hof", t.id); }
+function honourPro(G, p){ if (p.exp == null) return; const by = {}; p.hist.forEach(r => { if (r.lvl === "P") by[r.tid] = (by[r.tid] || 0) + 1; }); const best = Object.keys(by).sort((a, b) => by[b] - by[a])[0]; if (best != null && by[best] >= 5 && (p.hof || awardScore(p, true) >= 14)) honour(G, T(G, +best), p); }
+function honourCol(G, p){ if (awardScore(p, false) >= 22) honour(G, T(G, p.tid), p); }
+
+/* ----------------------------- eras ----------------------------- */
+const ERAS = { "1": ["The passing boom", "New rules protect receivers and quarterbacks. Expect bigger passing numbers."], "0": ["A balanced game", "The rule book settles. Neither side of the ball has the edge."], "-1": ["Defense strikes back", "Officials let them play. Sacks and interceptions climb, passing dips."] };
+function eraShift(G){
+  const cur = G.era ? G.era.k : 0; if (G.year - (G.era ? G.era.y : G.year - 2) < 4 || !chance(.4)) return;
+  const k = pick([-1, 0, 1].filter(x => x !== cur)); G.era = { k, y: G.year + 1 }; (G.eras = G.eras || []).unshift({ y: G.year + 1, k });
+  news(G, `RULE CHANGE: ${ERAS[k][0]}. ${ERAS[k][1]}`, "off");
 }
 
 /* ===== 06-events.js ===== */
@@ -1776,7 +1921,7 @@ async function saveGame(G){
 async function loadSlot(id){ const raw = await idb("readonly", s => s.get(slotKey(id))); if (!raw) return null; const G = typeof raw === "string" ? JSON.parse(raw) : raw; return migrate(G); }
 async function deleteSlot(id){ try { await idb("readwrite", s => s.delete(slotKey(id))); } catch (e) {} localStorage.setItem(SLOTS_KEY, JSON.stringify(listSlots().filter(s => s.id !== id))); }
 // Add fields that older saves lack here, rather than changing the keys.
-function migrate(G){ G.perks = G.perks || {}; if (G.ivLeft == null) G.ivLeft = 12; G.scouted = G.scouted || {}; G.pickOwn = G.pickOwn || {}; G.dc = G.dc || {}; G.pending = G.pending || []; G.events = G.events || []; G._pbp = {}; G.fac = G.fac || {}; if (G.coach && G.coach.sec == null) G.coach.sec = 62; try { backfillVotes(G); redoRookies(G); ensureStaff(G); if (G.awards && G.awards.pro) allStarGame(G); if (G.mode === "college" && G.phase === "off" && !G.nil) nilReset(G); } catch (e) {} return G; }
+function migrate(G){ G.perks = G.perks || {}; if (G.ivLeft == null) G.ivLeft = 12; G.scouted = G.scouted || {}; G.pickOwn = G.pickOwn || {}; G.dc = G.dc || {}; G.pending = G.pending || []; G.events = G.events || []; G._pbp = {}; G.fac = G.fac || {}; if (G.fans == null) G.fans = 55; G.nego = G.nego || {}; if (G.coach && G.coach.sec == null) G.coach.sec = 62; try { backfillVotes(G); redoRookies(G); ensureStaff(G); if (G.awards && G.awards.pro) allStarGame(G); if (G.mode === "college" && G.phase === "off" && !G.nil) nilReset(G); } catch (e) {} return G; }
 
 /* ===== 08-ui-base.js ===== */
 
@@ -2180,6 +2325,7 @@ function TeamPage({ tid, onClose }){
           {tab === "Trophy case" && <div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">{(t.pro ? [["Pocket Bowls", t.titles, "🏆"], ["All-time record", t.allW + "–" + t.allL, "📒"]] : [["National titles", t.titles, "🏆"], ["Conference titles", t.confTitles, "🥇"], ["Heisman winners", t.heismans, "🗿"], ["All-Americans", t.allAm, "⭐"], ["Bowl record", t.bowlW + "–" + t.bowlL, "🏟️"], ["Draft picks", t.picks, "📝"], ["All-time record", t.allW + "–" + t.allL, "📒"]]).map(([l, v, e]) => <div key={l} className="card p-3 text-center"><div className="text-2xl">{e}</div><div className="disp text-2xl mt-1">{v}</div><div className="text-[10px] text-slate-400">{l}</div></div>)}</div>
             {rivs.length > 0 && <Card title="Rivalry trophies">{rivs.map(r => { const o = T(G, r.a === t.id ? r.b : r.a), mine = r.a === t.id ? r.aw : r.bw, theirs = r.a === t.id ? r.bw : r.aw; return <div key={r.i} className="flex items-center gap-3 py-1.5 text-sm border-b border-white/5 last:border-0"><span className="text-lg">{r.holder === t.id ? "🏆" : "▫️"}</span><div className="flex-1 min-w-0"><div className="font-semibold truncate">{r.trophy}</div><div className="text-[11px] text-slate-400">{r.name} vs <TeamLink t={o} /></div></div><div className="tnum text-xs text-slate-300">{mine}–{theirs}</div></div>; })}</Card>}
+            <RingCard t={t} />
             {legends.length > 0 && <Card title="Program legends" className="mt-3">{legends.map(p => <div key={p.id} className="flex items-center gap-2 py-1 text-sm"><span className="text-[10px] text-slate-500 w-7">{p.pos}</span><PLink p={p} /><span className="text-[11px] text-amber-200/80 truncate">{awardChips(p).filter(c => c.w >= 60).slice(0, 3).map(c => (c.n > 1 ? c.n + "× " : "") + c.a).join(" · ")}</span></div>)}</Card>}
           </div>}
           {tab === "Pro alumni" && (alumni.length ? <div className="overflow-x-auto"><table className="st tnum"><thead><tr><th className="l">Player</th><th className="l">Pos</th><th className="l">Pro team</th><th>Ovr</th><th className="l">Drafted</th></tr></thead><tbody>{alumni.slice(0, 40).map(p => <tr key={p.id}><td className="l"><PLink p={p} /></td><td className="l">{p.pos}</td><td className="l"><TeamLink t={T(G, p.tid)} full /></td><td><Ovr v={p.ovr} /></td><td className="l text-slate-400">{p.draft ? `${p.draft.y} Rd ${p.draft.rd} (#${p.draft.pk})` : "Undrafted"}</td></tr>)}</tbody></table></div> : <Empty>No alumni in the pros yet.</Empty>)}
@@ -2468,7 +2614,7 @@ function CollegeTab(){
       {tab === "Rivalries" && <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">{G.riv.slice().sort((a, b) => ((b.a === G.uid || b.b === G.uid) ? 1 : 0) - ((a.a === G.uid || a.b === G.uid) ? 1 : 0)).map(r => { const a = T(G, r.a), b = T(G, r.b), l = r.last[0]; return (
         <div key={r.i} className="card p-3 relative overflow-hidden"><div className="absolute inset-0 opacity-25" style={{ background: `linear-gradient(110deg, ${a.c1} 0 50%, ${b.c1} 50% 100%)` }} /><div className="relative"><div className="disp text-base truncate">{r.name}</div><div className="text-[10px] text-amber-300/90 mb-2">{r.trophy}{r.holder != null ? " — held by " + T(G, r.holder).name : ""}</div>
           <div className="flex items-center justify-between text-sm"><span className="flex items-center gap-1.5"><Badge t={a} size={15} /><TeamLink t={a} /></span><span className="disp text-lg tnum">{r.aw}–{r.bw}</span><span className="flex items-center gap-1.5"><TeamLink t={b} /><Badge t={b} size={15} /></span></div>
-          <div className="text-[10px] text-slate-400 mt-1.5">{l ? `${l[0]}: ${T(G, l[1]).abbr} ${l[2]}, ${T(G, l[3]).abbr} ${l[4]}` : "Not yet played in this save"}</div></div></div>); })}</div>}
+          <div className="text-[10px] text-slate-400 mt-1.5">{l ? `${l[0]}: ${T(G, l[1]).abbr} ${l[2]}, ${T(G, l[3]).abbr} ${l[4]}` : "Not yet played in this save"}</div></div></div>); })}<div className="sm:col-span-2 lg:col-span-3"><RivalryHistory /></div></div>}
     </div>
   </div>);
 }
@@ -2840,13 +2986,13 @@ function FreeAgentPanel(){
   const ui = useUI(), G = ui.G, [f, setF] = useState("All"), room = capRoom(G, G.uid), n = rosterOf(G, G.uid).length;
   const rows = freeAgents(G).filter(p => f === "All" || p.pos === f).slice(0, 50);
   return <Card title="Free agents" right={`${money(room)} cap room · ${n} on roster`}><PosFilter value={f} onChange={setF} />
-    <PTable rows={rows} empty="No free agents at that position." cols={[["Interest", p => <InterestBar v={faInterest(G, p, G.uid)} />], ["Asking", p => money(askFor(G, p, G.uid)) + "/yr"], ["", p => <span className="inline-flex gap-1"><Btn small onClick={() => ui.openInterview(p.id)}>Meet</Btn><Btn small kind="pri" disabled={askFor(G, p, G.uid) > room || n >= 58} onClick={() => { ui.act(G => signFA(G, p, G.uid, 2, askFor(G, p, G.uid))); ui.toast(`${pname(p)} signs for two years.`); }}>Sign</Btn></span>]]} /></Card>;
+    <PTable rows={rows} empty="No free agents at that position." cols={[["Interest", p => <InterestBar v={faInterest(G, p, G.uid)} />], ["Asking", p => money(askFor(G, p, G.uid)) + "/yr"], ["", p => <span className="inline-flex gap-1"><Btn small onClick={() => ui.openInterview(p.id)}>Meet</Btn><NegoBtn p={p} /><Btn small kind="pri" disabled={askFor(G, p, G.uid) > room || n >= 58} onClick={() => { ui.act(G => signFA(G, p, G.uid, 2, askFor(G, p, G.uid))); ui.toast(`${pname(p)} signs for two years.`); }}>Sign</Btn></span>]]} /></Card>;
 }
 function ResignPanel(){
   const ui = useUI(), G = ui.G, rows = rosterOf(G, G.uid).filter(p => p.expiring).sort((a, b) => b.ovr - a.ovr), d = depthChart(G, G.uid);
   return <Card title="Expiring contracts" right={money(capRoom(G, G.uid)) + " cap room"}>
-    <div className="text-xs text-slate-400 mb-2">Anyone you don't re-sign here walks into free agency when you advance.</div>
-    <PTable rows={rows} empty={G.offStep > 1 ? "Re-signing is closed for this year." : "Nobody on your roster is out of contract."} cols={[["Role", p => d[p.pos].indexOf(p) < STARTERS[p.pos] ? "Starter" : "Depth"], ["Asking", p => money(askOf(G, p)) + "/yr"], ["", p => <span className="inline-flex gap-1">{[1, 3].map(y => <Btn key={y} small kind={y === 3 ? "pri" : undefined} onClick={() => ui.act(G => resign(G, p, y))}>{y} yr</Btn>)}</span>]]} /></Card>;
+    <div className="text-xs text-slate-400 mb-2">Anyone you don't re-sign here walks into free agency when you advance. Quick-sign at his asking price, negotiate years and guarantees, use your one franchise tag, or pick up a first-rounder's fifth-year option.</div>
+    <PTable rows={rows} empty={G.offStep > 1 ? "Re-signing is closed for this year." : "Nobody on your roster is out of contract."} cols={[["Role", p => d[p.pos].indexOf(p) < STARTERS[p.pos] ? "Starter" : "Depth"], ["Asking", p => money(askOf(G, p)) + "/yr"], ["", p => <span className="inline-flex gap-1">{[1, 3].map(y => <Btn key={y} small kind={y === 3 ? "pri" : undefined} onClick={() => ui.act(G => resign(G, p, y))}>{y} yr</Btn>)}<NegoBtn p={p} /><TagBtns p={p} /></span>]]} /></Card>;
 }
 function DraftPanel(){
   const ui = useUI(), G = ui.G, d = G.draft, [f, setF] = useState("All");
@@ -2900,7 +3046,7 @@ function SeasonReview(){
 }
 function OfficeTab(){
   const ui = useUI(), G = ui.G, pro = G.mode === "pro", off = G.phase === "off", s = G.offStep;
-  const tabs = pro ? (off ? ["Re-sign", "Free agents", "Trades", "Draft", "Cap"] : ["Draft", "Trades", "Free agents", "Cap"]) : ["Recruiting", "Portal", "Draft", "Class ranks"];
+  const tabs = pro ? (off ? ["Re-sign", "Free agents", "Trades", "Draft", "Cap"] : ["Draft", "Trades", "Free agents", "Cap"]) : ["Recruiting", "Portal", "Draft", "Schedule", "Class ranks"];
   const start = pro ? (off ? ["Re-sign", "Re-sign", "Free agents", "Draft", "Free agents", "Cap"][s] : "Draft") : (off ? ["Recruiting", "Recruiting", "Recruiting", "Draft", "Recruiting", "Class ranks"][s] : "Draft");
   const [tab, setTab] = useState(start);
   const tips = pro ? ["Look back on the year, then advance to open contract talks.", "Re-sign the players you want to keep. Everyone else hits the market when you advance.", "Shop the free-agent market. The draft begins when you advance.", "The draft is live. Make your picks; advancing lets your scouts finish it for you.", "College Signing Day happens around the league. Free agents are still available.", "Camp opens. Advancing develops every player and starts the new season."]
@@ -2908,6 +3054,7 @@ function OfficeTab(){
   return (<div className="space-y-3">
     {off && <div className="card p-3"><div className="flex gap-1.5 mb-2">{OFF_STEPS.map((x, i) => <div key={x} className="flex-1"><div className={cx("h-1.5 rounded-full", i < s ? "bg-acc" : i === s ? "bg-acc sheen" : "bg-slate-800")} /><div className={cx("text-[9px] sm:text-[10px] mt-1 truncate", i === s ? "text-slate-100 font-bold" : "text-slate-500")}>{x}</div></div>)}</div><div className="text-sm text-slate-300">{tips[s]}</div></div>}
     {off && s === 0 && <SeasonReview />}
+    {off && s === 5 && <CampCard />}
     <SubTabs tabs={tabs} value={tab} onChange={setTab} />
     {tab === "Re-sign" && <ResignPanel />}
     {tab === "Free agents" && <FreeAgentPanel />}
@@ -2917,6 +3064,7 @@ function OfficeTab(){
     {tab === "Recruiting" && <RecruitPanel />}
     {tab === "Portal" && <RecruitPanel portal />}
     {tab === "Class ranks" && <ClassRanks />}
+    {tab === "Schedule" && <SchedulePicker />}
   </div>);
 }
 
@@ -2995,7 +3143,7 @@ function InterviewModal({ pid, onClose }){
           {c && <div className="grid grid-cols-4 gap-2 text-center">{[["40-yard", c.forty + "s"], ["Bench", c.bench + " reps"], ["Vertical", c.vert + "″"], ["3-cone", c.cone + "s"]].map(([l, v]) => <div key={l} className="rounded-lg bg-white/5 p-2"><div className="text-[10px] uppercase tracking-widest text-slate-500">{l}</div><div className="font-bold tnum">{v}</div></div>)}</div>}
           <div className="space-y-2.5">{TRAITS.map(([k]) => <div key={k} className="text-sm"><div className="text-slate-400 italic">"{IV_Q[k][0]}"</div><div className="text-slate-200 mt-0.5 pl-3 border-l-2" style={{ borderColor: acc[0] }}>{IV_Q[k][1][trait(p, k) - 1]}</div></div>)}</div>
           {p.recruit || p.portal ? <div className="card p-3"><div className="text-[10px] uppercase tracking-widest text-slate-500">What matters most to him</div><div className="font-bold mt-0.5">{PRIOS[prioOf(p)]}</div><div className="flex items-center gap-2 mt-2 text-xs text-slate-400">Interest in {userTeam(G).name}: <InterestBar v={recruitInterest(G, p)} /></div><div className="flex items-center gap-1.5 mt-2 text-xs text-slate-400">Leaders: {recruitLeaders(G, p).map(([x]) => <Badge key={x.id} t={x} size={14} />)}</div>
-            <div className="mt-3 flex items-center gap-2"><Btn small kind="pri" disabled={G.pitchLeft <= 0 || (G.pitches[p.id] || 0) >= 3} onClick={() => ui.act(G => pitch(G, p))}>Pitch him ({G.pitches[p.id] || 0}/3)</Btn><span className="text-[11px] text-slate-500">Pitches land harder now that you know what he wants.</span></div></div> : null}
+            <div className="mt-3 flex items-center gap-2"><Btn small kind="pri" disabled={G.pitchLeft <= 0 || (G.pitches[p.id] || 0) >= 3} onClick={() => ui.act(G => pitch(G, p))}>Pitch him ({G.pitches[p.id] || 0}/3)</Btn><span className="text-[11px] text-slate-500">Pitches land harder now that you know what he wants.</span></div><PromiseBtn p={p} /></div> : null}
           {fa && G.mode === "pro" ? <div className="card p-3 text-sm"><div className="flex items-center gap-2">Interest in the {userTeam(G).nick}: <InterestBar v={faInterest(G, p, G.uid)} /></div><div className="text-xs text-slate-400 mt-1">He's asking {money(askFor(G, p, G.uid))} a year from you (market rate {money(askOf(G, p))}). Players who'd rather be elsewhere charge a premium.</div></div> : null}
           {prospect && <div className="text-xs text-slate-400">Work ethic changes how fast a young player develops. {trait(p, "we") >= 4 ? "This one will get everything out of his talent." : trait(p, "we") <= 2 ? "This one may never reach his ceiling." : ""}</div>}
         </div>}
@@ -3041,7 +3189,7 @@ function DraftCenter(){
     <SubTabs tabs={[active || !d || !d.log.length ? "Big board" : null, live || log.length ? "Draft room" : null, active || G.phase === "reg" ? "Mock draft" : null, active || G.phase === "reg" ? "Combine" : null, "Team needs", d && d.grades && G.phase === "off" ? "Grades" : null].filter(Boolean)} value={tab} onChange={setTab} />
     {tab === "Big board" && <Card title={"Big board · " + (G.year + 1) + " draft"} right={pro ? <span><b className="text-amber-300">{G.ivLeft}</b> interviews left · ~ is an unscouted read</span> : "College ratings; “Pro” is the projected rookie rating"}>
       <PosFilter value={f} onChange={setF} /><PTable rows={pool} empty="No prospects at that position." cols={pro ? [...cols, ["", ivBtn]] : cols} /></Card>}
-    {tab === "Draft room" && <div>{myDraftees(G).length > 0 && G.phase === "off" && <div className="card p-3 mb-3 flex items-center gap-3 text-sm"><span className="text-2xl">📞</span><div className="flex-1">{myDraftees(G).length} of your players got the call this year.</div><Btn small kind="pri" onClick={() => ui.act(G => { G.callsSeen = null; })}>Replay the calls</Btn></div>}<DraftNight /><div className="grid lg:grid-cols-5 gap-3">
+    {tab === "Draft room" && <div>{myDraftees(G).length > 0 && G.phase === "off" && <div className="card p-3 mb-3 flex items-center gap-3 text-sm"><span className="text-2xl">📞</span><div className="flex-1">{myDraftees(G).length} of your players got the call this year.</div><Btn small kind="pri" onClick={() => ui.act(G => { G.callsSeen = null; })}>Replay the calls</Btn></div>}<DraftNight />{mine && <TradeDownCard />}<div className="grid lg:grid-cols-5 gap-3">
       <div className="lg:col-span-3"><Card title={d.done ? "Draft complete" : `Round ${Math.ceil(pk / 32)} · Pick ${pk}`} right={d.done ? d.log.length + " picks" : mine ? <span className="text-amber-300 font-bold">You're on the clock</span> : tname(T(G, onClock(G))) + " on the clock"}>
         {mine && <div className="rounded-lg p-2.5 mb-2 text-xs bg-amber-400/10 text-amber-200">Pick a player below. The rest of the league picks until you're up again. Check Team needs and the Mock if you're torn.</div>}
         {!d.done ? <div><PosFilter value={f} onChange={setF} /><PTable rows={pool} empty="No prospects left at that position." cols={[...cols.slice(0, 3), ["", p => <span className="inline-flex gap-1">{pro && ivBtn(p)}{mine && <Btn small kind="pri" onClick={() => ui.act(G => { draftAssign(G, p); draftRun(G, false); })}>Draft</Btn>}</span>]]} /></div>
@@ -3141,12 +3289,14 @@ function StaffTab(){
   const what = (k, c) => k === "oc" ? `${c.scheme} · offense ${c.ovr >= 70 ? "+" : ""}${((c.ovr - 70) * .05).toFixed(1)}` : k === "dc" ? `${c.scheme} · defense ${c.ovr >= 70 ? "+" : ""}${((c.ovr - 70) * .05).toFixed(1)}` : k === "rc" ? `+${Math.max(0, round((c.ovr - 62) / 7))} recruiting pitches a year` : `+${Math.max(0, round((c.ovr - 62) / 7)) * 2} draft interviews`;
   return (<div className="space-y-3">
     <SeatMeter />
+    <FanCard />
     <div className="grid md:grid-cols-3 gap-3">{roles.map(([k, label]) => { const c = st[k]; if (!c) return null; return (
       <div key={k} className="card p-3"><div className="text-[10px] uppercase tracking-widest text-slate-500">{label}{c.interim ? " · interim" : ""}</div>
         <div className="flex items-center gap-3 mt-1"><Ring v={c.ovr} label="OVR" size={56} /><div className="min-w-0"><div className="font-bold truncate">{c.name}</div><div className="text-[11px] text-slate-400">Age {c.age} · since {c.since}</div><div className="text-[11px] text-slate-300">{what(k, c)}</div></div></div>
         <div className="mt-2"><Btn small disabled={(G.staffHired || {})[k]} onClick={() => setOpen(open === k ? null : k)}>{(G.staffHired || {})[k] ? "Hired this year" : open === k ? "Close" : "See candidates"}</Btn></div>
         {open === k && <div className="mt-2 space-y-1.5 page-in">{(pool[k] || []).map((x, i) => <div key={i} className="flex items-center gap-2 text-xs bg-white/5 rounded-lg px-2 py-1.5"><Ovr v={x.ovr} /><div className="flex-1 min-w-0"><div className="font-semibold truncate">{x.name}</div><div className="text-[10px] text-slate-400 truncate">age {x.age} · {what(k, x)}</div></div><Btn small kind="pri" onClick={() => { ui.act(G => hireStaff(G, k, i)); setOpen(null); }}>Hire</Btn></div>)}{!(pool[k] || []).length && <div className="text-[11px] text-slate-500">No candidates left this year.</div>}</div>}
       </div>); })}</div>
+    <TreeCard />
     <Card title="Default game plan" right="follows your coordinators' schemes until you change it"><PlanControls /></Card>
     <Card title="Facilities" right={<span>Paid for with Legacy Points · you have <b className="text-amber-300">{G.lp || 0} ◆</b></span>}>
       <div className="grid sm:grid-cols-2 gap-3">{FAC(G).map(([k, name, desc]) => { const lv = fac[k] || 0, cost = FAC_COST[lv]; return <div key={k} className="bg-white/5 rounded-xl p-3"><div className="flex items-center justify-between"><div className="font-bold text-sm">{name}</div><div className="flex gap-1">{[0, 1, 2, 3, 4].map(i => <span key={i} className="w-4 h-1.5 rounded-full" style={{ background: i < lv ? "var(--acc)" : "#1c2742" }} />)}</div></div><div className="text-[11px] text-slate-400 mt-0.5">{desc}</div>
@@ -3337,6 +3487,147 @@ function DraftCalls(){
   );
 }
 
+/* ===== 11d-ui-depth.js ===== */
+
+/* =========================================================================
+   UI — camp battles, promises, selection show, scheduling, contract talks,
+   tags, draft-day trade-downs, fans, coaching tree, ring of honour,
+   rivalry history
+   ========================================================================= */
+const Portal = ({ children }) => ReactDOM.createPortal(<UICtx.Provider value={useUI()}>{children}</UICtx.Provider>, document.body);
+
+/* ----------------------------- camp battles ----------------------------- */
+function CampCard(){
+  const ui = useUI(), G = ui.G, bt = useMemo(() => campBattles(G), [G.offStep, G.year, JSON.stringify(G.camp || {})]), camp = G.camp || {};
+  return <Card title="Position battles" right="training camp · close calls are yours to make">
+    {bt.length ? <div className="space-y-2">{bt.map(b => <div key={b.pos} className="bg-white/5 rounded-xl p-3"><div className="text-[10px] uppercase tracking-widest text-slate-500 mb-2">{b.pos}{STARTERS[b.pos] > 1 ? " · last starting spot" : " · starter"}{camp[b.pos] ? " · settled" : ""}</div>
+      <div className="grid grid-cols-2 gap-2">{[b.a, b.b].map(p => { const won = camp[b.pos] === p.id; return <div key={p.id} className={cx("rounded-lg p-2.5 border", won ? "border-[color:var(--acc)] bg-white/5" : "border-[#26324f]")}><div className="flex items-center gap-2"><Ovr v={p.ovr} /><span className="text-violet-300 text-xs">{p.pot}</span><PLink p={p} className="font-semibold truncate" /></div><div className="text-[10px] text-slate-400">{p.cls != null ? CLS[p.cls] : "age " + p.age}</div><div className="text-[11px] text-slate-300 mt-1 italic">{campNote(p)}</div>
+        <div className="mt-2">{won ? <span className="text-[11px] font-bold text-emerald-300">✓ Named the starter</span> : <Btn small kind="pri" onClick={() => ui.act(G => settleBattle(G, b.pos, p.id))}>Name him the starter</Btn>}</div></div>; })}</div></div>)}</div>
+      : <div className="text-sm text-slate-400">No close competitions this year — every job has a clear winner.</div>}
+    <div className="text-[11px] text-slate-500 mt-2">Leave a battle alone and the higher-rated player starts. Camp notes hint at work ethic and upside, which ratings alone don't show.</div></Card>;
+}
+
+/* ----------------------------- promises ----------------------------- */
+function PromiseBtn({ p }){
+  const ui = useUI(), G = ui.G, n = openPromises(G);
+  if (G.mode !== "college" || !(p.recruit || p.portal)) return null;
+  if (p.promise) return <div className="text-[11px] text-amber-200 mt-2">🤝 You promised him a starting job by {p.promise}. Break it and he transfers — and recruits hear about it.</div>;
+  return <div className="mt-2 flex items-center gap-2"><Btn small disabled={n >= 3 || p.commit != null} onClick={() => { ui.act(G => promiseTime(G, p)); ui.toast(G.players[p.id].commit === G.uid ? `${pname(p)} commits!` : "Promise made."); }}>🤝 Promise he'll start by {G.year + (p.portal ? 1 : 2)}</Btn><span className="text-[11px] text-slate-500">A big pull ({3 - n} left). He must start six games that season.</span></div>;
+}
+
+/* ----------------------------- selection show ----------------------------- */
+function SelectionShow(){
+  const ui = useUI(), G = ui.G, t = userTeam(G), col = !t.pro, ready = col ? !!G.cfp : !!G.pp, show = ready && G.phase === "reg" && G.selSeen !== G.year, [n, setN] = useState(0);
+  const seeds = !ready ? [] : col ? G.cfp.seeds.map((id, i) => [i + 1, id, ""]) : PRO_CONFS.flatMap(c => G.pp.seeds[c].map((id, i) => [i + 1, id, c]));
+  useEffect(() => { if (!show || n >= seeds.length) return; const tm = setTimeout(() => setN(n + 1), col ? 420 : 260); return () => clearTimeout(tm); }, [show, n, seeds.length]);
+  if (!show) return null;
+  const done = () => ui.act(G => { G.selSeen = G.year; }), order = col ? seeds.slice().reverse() : seeds, mine = seeds.find(s => s[1] === t.id), all = n >= seeds.length;
+  const bowl = col ? G.cs.find(g => g.post === "bowl" && (g.h === t.id || g.a === t.id)) : null, r1 = col && mine ? [...G.cfp.r1, ...G.cfp.qf].map(id => gameById(G, id)).find(g => g && (g.h === t.id || g.a === t.id)) : null;
+  return <Modal onClose={done} wide accent={[t.c1, t.c2]}>
+    <div className="p-5" style={{ background: `radial-gradient(ellipse at top, ${t.c1}55, transparent 65%)` }}>
+      <div className="text-[10px] uppercase tracking-[.35em] text-amber-300">{G.year} · Selection {col ? "Sunday" : "night"}</div>
+      <div className="disp text-4xl mt-1">{col ? "The playoff field is set" : "The playoff picture"}</div>
+      <div className={cx("grid gap-1.5 mt-4", col ? "sm:grid-cols-2 lg:grid-cols-3" : "sm:grid-cols-2")}>{order.map((s, i) => { const x = T(G, s[1]), on = i < n, me = s[1] === t.id; return (
+        <div key={s[2] + s[0]} className={cx("flex items-center gap-2.5 rounded-xl px-3 py-2 border transition-all duration-500", on ? "opacity-100" : "opacity-0 translate-y-2", me ? "border-amber-300 bg-amber-400/10" : "border-[#1f2a44] bg-white/5")} style={col ? {} : { order: (s[2] === PRO_CONFS[0] ? 0 : 1) + s[0] * 2 }}>
+          <div className="disp text-2xl w-8 text-right" style={{ color: s[0] <= (col ? 4 : 1) ? "#facc15" : "#94a3b8" }}>{s[0]}</div><Helmet t={x} size={34} /><div className="min-w-0 flex-1"><div className="font-bold truncate">{x.pro ? x.city + " " + x.nick : x.name}</div><div className="text-[10px] text-slate-400">{x.w}–{x.l}{col ? (s[0] <= 4 ? " · first-round bye" : "") : " · " + s[2] + (s[0] === 1 ? " · bye" : "")}</div></div>{me && <span className="text-[10px] font-black text-amber-300">YOU</span>}</div>); })}</div>
+      {all && <div className="card p-4 mt-4 rise"><div className="disp text-2xl" style={{ color: mine ? "#4ade80" : bowl ? "#fbbf24" : "#f87171" }}>{mine ? `You're in — the No. ${mine[0]} seed` : bowl ? "Not this year, but you're going bowling" : col ? "Left out" : "Season over — you missed the playoffs"}</div>
+        <div className="text-sm text-slate-300 mt-1">{mine && r1 ? `First up: ${r1.tag ? r1.tag.replace(/.*· /, "") + " — " : ""}${T(G, r1.h === t.id ? r1.a : r1.h).name || T(G, r1.h === t.id ? r1.a : r1.h).nick}.` : mine ? "A week off to get healthy." : bowl ? `${bowl.tag}: you draw ${T(G, bowl.h === t.id ? bowl.a : bowl.h).name}.` : col ? `First four out: ${G.cfp.firstOut.map(id => T(G, id).abbr).join(", ")}. ${G.cfp.firstOut.includes(t.id) ? "That one stings." : "No bowl either — six wins gets you in."}` : "The work starts in the offseason."}</div></div>}
+      <div className="mt-4 flex gap-2"><Btn kind="pri" onClick={all ? done : () => setN(seeds.length)}>{all ? "On to the postseason" : "Show them all"}</Btn></div>
+    </div></Modal>;
+}
+function OrderReveal(){
+  const ui = useUI(), G = ui.G, t = userTeam(G), d = G.draft, show = t.pro && G.phase === "off" && G.offStep === 0 && d && !d.done && G.orderSeen !== G.year, [n, setN] = useState(0), top = d ? d.order.slice(0, 12) : [];
+  useEffect(() => { if (!show || n >= top.length) return; const tm = setTimeout(() => setN(n + 1), 480); return () => clearTimeout(tm); }, [show, n, top.length]);
+  if (!show) return null;
+  const done = () => ui.act(G => { G.orderSeen = G.year; }), my = d.order.indexOf(t.id) + 1, comp = d.order.length - 224, myComp = d.order.slice(224).filter(x => x === t.id).length;
+  return <Modal onClose={done} accent={[t.c1, t.c2]}><div className="p-5">
+    <div className="text-[10px] uppercase tracking-[.35em] text-amber-300">{G.year + 1} draft</div><div className="disp text-3xl mt-1">The order is set</div>
+    <div className="mt-3 space-y-1">{top.map((id, i) => i).reverse().map(i => { const x = T(G, top[i]), on = top.length - 1 - i < n, me = top[i] === t.id; return <div key={i} className={cx("flex items-center gap-3 rounded-lg px-3 py-1.5 transition-all duration-500", on ? "opacity-100" : "opacity-0 -translate-x-3", me ? "bg-amber-400/15 ring-1 ring-amber-300" : "bg-white/5")}><div className={cx("disp w-8 text-right", i === 0 ? "text-3xl text-amber-300" : "text-xl text-slate-400")}>{i + 1}</div><Helmet t={x} size={i === 0 ? 40 : 28} /><div className="flex-1 font-semibold">{x.city} {x.nick}</div><div className="text-xs text-slate-400 tnum">{(x.hist[x.hist.length - 1] || {}).w}–{(x.hist[x.hist.length - 1] || {}).l}</div></div>; })}</div>
+    <div className="text-sm text-slate-300 mt-3">Your first pick is <b className="text-amber-300">No. {my}</b>.{comp > 0 ? ` ${comp} compensatory pick${comp > 1 ? "s were" : " was"} added after round seven for teams that lost free agents${myComp ? " — " + myComp + " of them yours" : ""}.` : ""}</div>
+    <div className="mt-4"><Btn kind="pri" onClick={done}>Open the offseason</Btn></div></div></Modal>;
+}
+
+/* ----------------------------- scheduling ----------------------------- */
+function SchedulePicker(){
+  const ui = useUI(), G = ui.G, t = userTeam(G), opts = useMemo(() => schedOptions(G), [G.year, G.uid]), wish = G.ncWish || [], [kind, setKind] = useState("Marquee");
+  if (t.pro) return null;
+  if (G.phase !== "off") return <Card><Empty>Next year's non-conference schedule opens in the offseason. This year's games are under Team → Schedule.</Empty></Card>;
+  const col = { Marquee: "#facc15", "Even fight": "#38bdf8", "Should win": "#a3e635", Cupcake: "#94a3b8" };
+  return <Card title={`${G.year + 1} non-conference schedule`} right={`${wish.length}/3 requests`}>
+    <div className="text-xs text-slate-400 mb-3">Ask for up to three opponents. Marquee wins lift you in the poll and fire up the fans; a cupcake is a near-certain win that impresses nobody. The rest of the slate is filled for you.</div>
+    {wish.length > 0 && <div className="flex flex-wrap gap-1.5 mb-3">{wish.map(id => { const x = T(G, id); return <span key={id} className="px-2 py-1 rounded-lg bg-amber-400/15 border border-amber-300/40 text-xs inline-flex items-center gap-2"><Badge t={x} size={14} />{x.name}<span className="link text-rose-300" onClick={() => ui.act(G => toggleWish(G, id))}>✕</span></span>; })}</div>}
+    <SubTabs tabs={["Marquee", "Even fight", "Should win", "Cupcake"]} value={kind} onChange={setKind} />
+    <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-1.5">{opts.filter(o => o.kind === kind).slice(0, 18).map(o => { const on = wish.includes(o.t.id); return <button key={o.t.id} disabled={!on && wish.length >= 3} onClick={() => ui.act(G => toggleWish(G, o.t.id))} className={cx("flex items-center gap-2 rounded-lg px-2.5 py-2 text-left border", on ? "border-amber-300 bg-amber-400/10" : "border-[#26324f] hover:bg-white/5")}><Badge t={o.t} size={18} /><div className="flex-1 min-w-0"><div className="text-sm font-semibold truncate">{o.t.name}</div><div className="text-[10px] text-slate-400">{G.confs[o.t.conf].name} · prestige {round(o.t.prestige)} · {(o.t.hist[o.t.hist.length - 1] || {}).w || 0}–{(o.t.hist[o.t.hist.length - 1] || {}).l || 0} last year</div></div><span className="text-[9px] font-black uppercase" style={{ color: col[o.kind] }}>{on ? "✓" : "+"}</span></button>; })}</div></Card>;
+}
+
+/* ----------------------------- contract talks ----------------------------- */
+function NegotiateModal({ pid, onClose }){
+  const ui = useUI(), G = ui.G, p = G.players[pid], ask = p ? baseAsk(G, p) : 1, [amt, setAmt] = useState(+ask.toFixed(2)), [yrs, setYrs] = useState(p ? wantYears(p) : 2), [gtd, setGtd] = useState(.3), [res, setRes] = useState(null);
+  if (!p) return null;
+  const t = userTeam(G), s = (G.nego || {})[p.id] || { tries: 0 }, sc = offerScore(G, p, { amt, yrs, gtd }), signed = res && res.ok, dead = s.walked || (res && res.walked);
+  const mood = sc >= 1.05 ? ["He'd sign this today", "#4ade80"] : sc >= .97 ? ["Right at his number", "#a3e635"] : sc >= .88 ? ["Close", "#fbbf24"] : sc >= .75 ? ["Well short", "#fb923c"] : ["Insulting", "#f87171"];
+  const offer = () => { let r; ui.act(G => { r = negotiate(G, p, { amt, yrs, gtd }); }); setRes(r); if (r && r.ok) ui.toast(`${pname(p)} signs: ${yrs} yr, ${money(amt)}.`); };
+  return <Modal onClose={onClose} accent={[t.c1, t.c2]}><div className="p-5">
+    <div className="text-[10px] uppercase tracking-[.3em] text-slate-400">Contract talks · round {Math.min(4, s.tries + 1)} of 4</div>
+    <div className="flex items-center gap-3 mt-1"><Ring v={p.ovr} label="OVR" size={54} /><div><div className="disp text-3xl"><PLink p={p} /></div><div className="text-xs text-slate-400">{p.pos} · age {p.age} · asking {money(ask)} a year · wants {wantYears(p)} year{wantYears(p) > 1 ? "s" : ""}{p.fa ? " · interest in you " + faInterest(G, p, G.uid) : ""}</div></div></div>
+    {signed ? <div className="card p-4 mt-4 text-center pop"><div className="text-3xl">🖊️</div><div className="disp text-2xl text-emerald-400 mt-1">Signed</div><div className="text-sm text-slate-300">{res.msg} {p.c ? `${p.c.yrs} year${p.c.yrs > 1 ? "s" : ""}, ${money(p.c.amt)} a year, ${round((p.c.gtd || 0) * 100)}% guaranteed.` : ""}</div><div className="mt-3"><Btn kind="pri" onClick={onClose}>Done</Btn></div></div>
+      : dead ? <div className="card p-4 mt-4 text-center"><div className="text-3xl">📵</div><div className="disp text-xl text-rose-400 mt-1">Talks are off</div><div className="text-sm text-slate-300">{(res && res.msg) || "His agent isn't taking your calls any more this year."}</div><div className="mt-3"><Btn onClick={onClose}>Close</Btn></div></div>
+      : <div className="mt-4 space-y-4">
+        <div><div className="flex justify-between text-xs mb-1"><span className="text-slate-400">Salary per year</span><b className="tnum">{money(amt)}</b></div><input type="range" min={+(ask * .6).toFixed(2)} max={+(ask * 1.5).toFixed(2)} step="0.05" value={amt} onChange={e => setAmt(+e.target.value)} className="w-full" /></div>
+        <div><div className="text-xs text-slate-400 mb-1">Years</div><div className="flex gap-1.5">{[1, 2, 3, 4, 5].map(y => <button key={y} onClick={() => setYrs(y)} className={cx("flex-1 py-1.5 rounded-lg text-sm font-bold border", yrs === y ? "bg-acc text-slate-950 border-transparent" : "border-[#26324f] text-slate-300")}>{y}</button>)}</div></div>
+        <div><div className="flex justify-between text-xs mb-1"><span className="text-slate-400">Guaranteed</span><b className="tnum">{round(gtd * 100)}% · {money(amt * gtd)} dead cap if you cut him</b></div><input type="range" min="0" max="1" step="0.05" value={gtd} onChange={e => setGtd(+e.target.value)} className="w-full" /></div>
+        <div><div className="flex justify-between text-[11px] mb-1"><span className="font-bold" style={{ color: mood[1] }}>{mood[0]}</span><span className="text-slate-500">cap room {money(capRoom(G, G.uid) + (p.tid === G.uid && p.c ? p.c.amt : 0))}</span></div><div className="relative h-2.5 rounded-full bg-slate-800 overflow-hidden"><div className="h-full rounded-full" style={{ width: clamp(sc * 80, 0, 100) + "%", background: mood[1], transition: "width .25s" }} /><div className="absolute inset-y-0 w-0.5 bg-white/70" style={{ left: "80%" }} /></div></div>
+        {res && <div className="rounded-lg bg-amber-400/10 text-amber-100 text-sm px-3 py-2">{res.msg}{res.counter && <div className="mt-1.5 flex items-center gap-2 flex-wrap text-xs">Their counter: <b>{res.counter.yrs} yr · {money(res.counter.amt)} · {round(res.counter.gtd * 100)}% guaranteed</b><Btn small kind="pri" onClick={() => { setAmt(res.counter.amt); setYrs(res.counter.yrs); setGtd(res.counter.gtd); }}>Match it</Btn></div>}</div>}
+        <div className="flex gap-2"><Btn kind="pri" onClick={offer}>Make the offer</Btn><Btn onClick={onClose}>Step away</Btn></div>
+        <div className="text-[11px] text-slate-500">More guaranteed money or the contract length he wants lets you pay less per year. Four rounds and he walks; an insulting offer can end it sooner.</div>
+      </div>}
+  </div></Modal>;
+}
+function NegoBtn({ p, label }){ const [open, setOpen] = useState(false), G = useUI().G, off = ((G.nego || {})[p.id] || {}).walked; return <React.Fragment><Btn small disabled={off} onClick={() => setOpen(true)}>{off ? "Walked" : label || "Negotiate"}</Btn>{open && <Portal><NegotiateModal pid={p.id} onClose={() => setOpen(false)} /></Portal>}</React.Fragment>; }
+function TagBtns({ p }){
+  const ui = useUI(), G = ui.G;
+  return <React.Fragment>{canOption(p) && <Btn small onClick={() => { ui.act(G => fifthYear(G, p)); ui.toast(`Fifth-year option picked up on ${pname(p)}.`); }} >5th-yr option</Btn>}<Btn small disabled={G.tagUsed === G.year} onClick={() => { if (confirm(`Franchise-tag ${pname(p)} for one year at ${money(tagCost(G, p))}? You get one tag a year.`)) { ui.act(G => tagPlayer(G, p)); ui.toast(`${pname(p)} tagged.`); } }}>Tag {money(tagCost(G, p))}</Btn></React.Fragment>;
+}
+
+/* ----------------------------- draft day: trade down ----------------------------- */
+function TradeDownCard(){
+  const ui = useUI(), G = ui.G, offers = useMemo(() => tradeDownOffers(G), [G.draft && G.draft.pick, G.draft && G.draft.order.join(",").length]);
+  if (!offers.length) return null;
+  return <Card title="The phones are ringing" right="teams want your pick" className="mb-3">{offers.map(o => { const t = T(G, o.tid); return <div key={o.tid} className="flex items-center gap-3 py-2 border-b border-white/5 last:border-0"><Helmet t={t} size={34} /><div className="flex-1 min-w-0"><div className="text-sm"><b>{tname(t)}</b> want No. {o.i + 1}</div><div className="text-xs text-slate-300">You get No. {o.j + 1} ({pickRound(o.j)}) and No. {o.k + 1} ({pickRound(o.k)})</div><div className="text-[10px]" style={{ color: o.v >= o.v0 * 1.1 ? "#4ade80" : o.v >= o.v0 ? "#a3e635" : "#fbbf24" }}>{o.v >= o.v0 * 1.1 ? "They're overpaying" : o.v >= o.v0 ? "Fair value" : "A little light"} · their picks {o.v} vs yours {o.v0}</div></div><Btn small kind="pri" onClick={() => { ui.act(G => acceptTradeDown(G, o)); ui.toast(`You move down to No. ${o.j + 1}.`); }}>Move down</Btn></div>; })}
+    <div className="text-[11px] text-slate-500 mt-1">To move up instead, use Front Office → Trades: picks can change hands any time before the draft ends.</div></Card>;
+}
+
+/* ----------------------------- fans, owner, coaching tree ----------------------------- */
+function FanCard(){
+  const G = useUI().G, f = G.fans == null ? 55 : G.fans, [l, c] = fanLabel(f), t = userTeam(G), era = G.era && G.era.k ? ERAS[G.era.k] : null;
+  return <Card title={t.pro ? "Fans and ownership" : "Fans and boosters"} right={"$" + revenueOf(G) + "M revenue this year"}>
+    <div className="flex items-center gap-3"><div className="disp text-2xl w-44 shrink-0" style={{ color: c }}>{l}</div><div className="flex-1"><HBar v={f} max={100} color={c} h={9} /><div className="text-[11px] text-slate-400 mt-1">Wins fill the building; big-game and rivalry results count double. A loud house means more false starts for visitors, {t.pro ? "a more patient owner" : "a bigger NIL pot"} and a safer job.</div></div></div>
+    {era && <div className="mt-3 text-xs rounded-lg bg-sky-400/10 text-sky-100 px-3 py-2">📜 <b>{era[0]}</b> (since {G.era.y}) — {era[1]}</div>}</Card>;
+}
+function TreeCard(){
+  const G = useUI().G, rows = treeRows(G); if (!rows.length) return null;
+  return <Card title="Your coaching tree" right="assistants who became head coaches">{rows.map((r, i) => <div key={i} className="flex items-center gap-2 py-1.5 border-b border-white/5 last:border-0 text-sm"><span className="text-lg">🌳</span><div className="flex-1 min-w-0"><div className="font-semibold">{r.name}</div><div className="text-[11px] text-slate-400">Your {r.role.toLowerCase()} until {r.y - 1}</div></div>{r.t ? <span className="inline-flex items-center gap-2 text-xs"><Badge t={r.t} size={15} /><TeamLink t={r.t} /><b className="tnum">{r.w}–{r.l}</b></span> : <span className="text-xs text-slate-500">no longer a head coach</span>}</div>)}</Card>;
+}
+function RingCard({ t }){
+  const G = useUI().G, ring = t.ring || []; if (!ring.length) return null;
+  return <Card title="Ring of honour" right="retired numbers" className="mt-3"><div className="flex flex-wrap gap-2">{ring.map(r => <div key={r.pid} className="rounded-xl overflow-hidden text-center pop" style={{ width: 86, background: t.c1, color: inkOn(t.c1) }}><div className="disp text-4xl pt-2 leading-none">{r.num}</div><div className="text-[10px] font-bold px-1 truncate"><PLink pid={r.pid} name={r.n.split(" ").slice(-1)[0]} /></div><div className="text-[8px] opacity-70 pb-1.5">{r.pos} · {r.y}</div></div>)}</div></Card>;
+}
+
+/* ----------------------------- rivalry history ----------------------------- */
+function RivalryHistory(){
+  const ui = useUI(), G = ui.G, mine = G.riv.filter(r => r.a === G.uid || r.b === G.uid), [ri, setRi] = useState((mine[0] || G.riv[0] || {}).i), rv = G.riv.find(r => r.i === ri); if (!rv) return null;
+  const a = T(G, rv.a), b = T(G, rv.b), games = rv.last.map(l => { const wid = l[2] > l[4] ? l[1] : l[3], m = Math.abs(l[2] - l[4]); return { y: l[0], w: T(G, wid), l: T(G, wid === l[1] ? l[3] : l[1]), ws: Math.max(l[2], l[4]), ls: Math.min(l[2], l[4]), m, home: T(G, l[1]) }; });
+  let best = 0, bw = null, run = 0, rw = null; games.slice().reverse().forEach(g => { if (rw && g.w.id === rw.id) run++; else { rw = g.w; run = 1; } if (run > best) { best = run; bw = rw; } });
+  const blow = games.slice().sort((x, y) => y.m - x.m)[0], close = games.slice().sort((x, y) => x.m - y.m)[0], tot = Math.max(1, rv.aw + rv.bw);
+  return <Card title="Rivalry history" right={<Sel value={ri} onChange={v => v != null && setRi(v)}>{G.riv.map(r => <option key={r.i} value={r.i}>{r.name}</option>)}</Sel>} className="mt-3">
+    <div className="flex items-center gap-3"><Helmet t={a} size={44} /><div className="flex-1"><div className="flex justify-between text-sm font-bold"><span>{a.name} {rv.aw}</span><span className="text-amber-300 text-xs">{rv.trophy}</span><span>{rv.bw} {b.name}</span></div><div className="flex h-2.5 rounded-full overflow-hidden mt-1 bg-slate-800"><div style={{ width: rv.aw / tot * 100 + "%", background: brightOf(a) }} /><div style={{ width: rv.bw / tot * 100 + "%", background: brightOf(b) }} /></div></div><Helmet t={b} size={44} flip /></div>
+    {games.length ? <React.Fragment>
+      <div className="grid sm:grid-cols-3 gap-2 mt-3">{[["Longest streak (in this save)", bw ? `${bw.abbr} · ${best} in a row` : "—"], ["Biggest win", blow ? `${blow.w.abbr} ${blow.ws}–${blow.ls} (${blow.y})` : "—"], ["Closest game", close ? `${close.w.abbr} ${close.ws}–${close.ls} (${close.y})` : "—"]].map(([l, v]) => <div key={l} className="bg-white/5 rounded-lg p-2.5"><div className="text-[9px] uppercase tracking-widest text-slate-500">{l}</div><div className="text-sm font-bold mt-0.5">{v}</div></div>)}</div>
+      <div className="flex gap-1 mt-3 overflow-x-auto pb-1">{games.slice().reverse().map(g => <div key={g.y} className="text-center shrink-0" title={`${g.y}: ${g.w.name} ${g.ws}, ${g.l.name} ${g.ls}`}><div className="w-9 h-9 rounded-lg flex items-center justify-center text-[9px] font-black" style={{ background: g.w.c1, color: inkOn(g.w.c1) }}>{g.w.abbr}</div><div className="text-[8px] text-slate-400 tnum mt-0.5">{g.ws}–{g.ls}</div><div className="text-[8px] text-slate-600">'{String(g.y).slice(2)}</div></div>)}</div>
+    </React.Fragment> : <div className="text-xs text-slate-500 mt-3">Not yet played in this save. The all-time series total above carries over from before your career began.</div>}
+  </Card>;
+}
+
 /* ===== 12-ui-app.js ===== */
 
 /* =========================================================================
@@ -3478,6 +3769,8 @@ function App(){
         {top && top[0] === "i" && <InterviewModal key={"i" + top[1] + stack.length} pid={top[1]} onClose={pop} />}
         {ceremony && G.awards.col && <Ceremony onClose={() => setCeremony(false)} />}
         {!ceremony && !busy && <DraftCalls />}
+        {!ceremony && !busy && <SelectionShow />}
+        {!ceremony && !busy && <OrderReveal />}
         {toastMsg && <div className="fixed left-1/2 -translate-x-1/2 bottom-20 z-[90] px-4 py-2.5 rounded-xl text-sm bg-slate-100 text-slate-950 font-semibold shadow-xl pop max-w-[90vw] text-center">{toastMsg}</div>}
       </div>
     </UICtx.Provider>

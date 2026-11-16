@@ -190,7 +190,7 @@ function simGame(G, H, A, o = {}){
   const sc = [0, 0], q = [[0, 0, 0, 0, 0], [0, 0, 0, 0, 0]], smry = [], flow = [[0, 0]], pbp = o.pbp ? [] : null;
   const tot = [{ pl: 0, yd: 0, py: 0, ry: 0, to: 0, fd: 0 }, { pl: 0, yd: 0, py: 0, ry: 0, to: 0, fd: 0 }];
   let clock = 0, ot = 0, asked = 0;
-  const PL = o.plan || [{}, {}], wx = o.wx || "", WX = { rain: [.03, .03, 1.6, .03], wind: [.02, .08, 1, .04], snow: [.045, .05, 1.5, .06] }[wx] || [0, 0, 1, 0], crowd = o.neutral ? 0 : (o.crowd || 0), calls = o.calls || [];
+  const ERA = o.era || 0, PL = o.plan || [{}, {}], wx = o.wx || "", WX = { rain: [.03, .03, 1.6, .03], wind: [.02, .08, 1, .04], snow: [.045, .05, 1.5, .06] }[wx] || [0, 0, 1, 0], crowd = o.neutral ? 0 : (o.crowd || 0), calls = o.calls || [];
   // A decision only the user can make: answer from the list, or stop the sim and ask.
   const ask = info => { if (calls.length) return calls.shift(); if (o.ask && asked < 6) { asked++; throw { _need: Object.assign(info, { sc: sc.slice(), clock, last: pbp ? pbp.slice(-4).map(x => x[3]) : [] }) }; } return null; };
   const nm = p => p ? p.fn[0] + ". " + p.ln : "Team";
@@ -216,12 +216,12 @@ function simGame(G, H, A, o = {}){
         }
       }
       if (crowd && i === 1 && chance(crowd * .012)) { const back = Math.min(5, y - 1); y -= back; togo += back; log(i, y, "False start — the crowd is deafening", ""); }
-      let pPass = .56 + (togo > 7 && down > 1 ? .17 : 0) - (togo <= 2 ? .2 : 0) + (O.passOff - O.runOff) * .004 + (pl.pass || 0) * .09 - WX[3];
+      let pPass = .56 + (togo > 7 && down > 1 ? .17 : 0) - (togo <= 2 ? .2 : 0) + (O.passOff - O.runOff) * .004 + (pl.pass || 0) * .09 - WX[3] + ERA * .025;
       if (late) pPass += diff > 0 ? -.2 : diff < 0 ? .15 : 0;
       tot[i].pl++;
       let gain = 0, to = false, td = false, inc = false, txt = ""; const qb = O.qb;
       if (chance(clamp(pPass, .15, .9))) {
-        if (chance(clamp(.054 + (D.rush - O.pblk) * .0026 + bl * .014, .02, .17))) {
+        if (chance(clamp(.054 + (D.rush - O.pblk) * .0026 + bl * .014 - ERA * .006, .02, .17))) {
           gain = -rint(3, 10); const d = wpick(D.rushers); add(qb, "sk"); add(d, "sck"); add(d, "tk"); add(d, "tfl"); add(pick(O.ol), "sal");
           txt = nm(qb) + " sacked by " + nm(d) + " for " + gain; if (chance(.07 * WX[2])) { to = true; add(d, "ff"); add(qb, "fum"); txt += ", FUMBLE — defense recovers"; }
         } else if (qb && chance(clamp((qb.r[3] - 52) * .0025, 0, .11))) {
@@ -229,10 +229,10 @@ function simGame(G, H, A, o = {}){
           if (y + gain >= 100) { td = true; add(qb, "rtd"); } else add(wpick(D.passTk), "tk");
         } else {
           const tgt = wpick(O.targets); add(qb, "pa"); add(tgt, "tg");
-          if (chance(clamp(.025 + (D.cover - (qb ? qb.r[1] : 50)) * .0009 + bl * .003, .008, .06))) {
+          if (chance(clamp(.025 + (D.cover - (qb ? qb.r[1] : 50)) * .0009 + bl * .003 - ERA * .003, .008, .06))) {
             to = true; const d = wpick(D.dbs); add(d, "int"); add(d, "pd"); add(qb, "pi"); txt = nm(qb) + " pass INTERCEPTED by " + nm(d);
             if (chance(.05)) { add(d, "dtd"); clock += 12; tot[i].to++; score(1 - i, 6, nm(d) + " interception return TD"); xp(1 - i, D); log(1 - i, 100, txt + " — returned for a TOUCHDOWN", "td"); return { end: "td" }; }
-          } else if (chance(clamp(.635 + (O.passOff - D.passDef) * .0075 - WX[0] - bl * .02, .36, .82))) {
+          } else if (chance(clamp(.635 + (O.passOff - D.passDef) * .0075 - WX[0] - bl * .02 + ERA * .018, .36, .84))) {
             let g = round(2 + -Math.log(1 - _rng()) * (9.9 + (O.passOff - D.passDef) * .07) * (1 + bl * .13)); if (tgt && tgt.pos === "RB") g = round(g * .65);
             gain = Math.min(g, 100 - y); add(qb, "pc"); add(qb, "py", gain); add(tgt, "rec"); add(tgt, "rcy", gain); tot[i].py += gain; txt = nm(qb) + " pass to " + nm(tgt) + " for " + gain;
             if (y + gain >= 100) { td = true; add(qb, "ptd"); add(tgt, "rctd"); } else add(wpick(D.passTk), "tk");

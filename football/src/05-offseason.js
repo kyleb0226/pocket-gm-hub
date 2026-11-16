@@ -8,18 +8,20 @@ const awardScore = (p, pro) => sum(p.aw, ([, a]) => pro
   : (a === "Heisman Trophy" ? 30 : /All-American$/.test(a) && !/Second|Freshman/.test(a) ? 12 : a === "Second-team All-American" ? 5 : /Award|Trophy$|Golden Arm/.test(a) && !/finalist|Joe Moore/.test(a) ? 10 : /^First-team All-/.test(a) ? 2 : 0));
 const notable = p => p.hof || p.chof || awardScore(p, false) >= 10 || awardScore(p, true) >= 4 || (p.exp || 0) >= 7;
 function retire(G, p, why){
+  honourPro(G, p);
   p.ret = G.year; p.tid = null; delete p.fa; delete p.c; G._ros = null;
   if (p.exp != null && awardScore(p, true) + (careerTotals(p, "P").g || 0) / 16 >= 45 && !p.hof) { p.hof = G.year; G.hof.push(p.id); news(G, `${pname(p)} (${p.pos}) retires and is headed for the Pro Hall of Fame.`, "hof"); }
   if (!notable(p)) dropP(G, p);
 }
 function leaveCollege(G, p){
+  honourCol(G, p);
   if (awardScore(p, false) >= 34 && !p.chof) { p.chof = G.year; G.colHof.push(p.id); }
   p.col = p.tid; delete p.portal; delete p.stay;
 }
-const payroll = (G, tid) => sum(rosterOf(G, tid), p => p.c ? p.c.amt : 0);
+const payroll = (G, tid) => sum(rosterOf(G, tid), p => p.c ? p.c.amt : 0) + ((G.dead && G.dead[tid]) || 0);
 const capRoom = (G, tid) => CAP - payroll(G, tid);
 const askOf = (G, p) => +Math.max(.9, salaryFor(p) * (G.capK || 1)).toFixed(2);
-function toFA(G, p){ p.fa = 1; p.tid = null; delete p.c; G._ros = null; }
+function toFA(G, p){ if (p.tid != null) p.lastT = p.tid; p.fa = 1; p.tid = null; delete p.c; G._ros = null; }
 
 function beginOffseason(G){
   archiveStats(G); seasonLP(G);
@@ -38,7 +40,8 @@ function beginOffseason(G){
   G.openJobs = fired.filter(t => !isUser(G, t.id)).map(t => t.id);
   G.openPro = [];
   G.pro.forEach(t => { if (isUser(G, t.id)) return; const h = t.hist.slice(-2); t.coach.age++; if (h.length === 2 && h.every(r => r.w <= 5) && G.year - t.coach.since >= 1) { const old = t.coach; G.openPro.push(t.id); t.coach = makeCoach(G, 68); t.coach.since = G.year + 1; news(G, `The ${t.nick} fire ${old.name}; ${t.coach.name} takes over.`, "coach", t.id); } });
-  jobReview(G); staffOffseason(G); realignment(G);
+  G.fans = clamp((G.fans == null ? 55 : G.fans) * .85 + 8 + (/National Champions|Won Pocket Bowl/.test((userTeam(G).hist[userTeam(G).hist.length - 1] || {}).post || "") ? 14 : 0), 0, 100);
+  jobReview(G); staffOffseason(G); realignment(G); eraShift(G); G.nego = {}; G.dead = {};
   // --- pro: retirements and expiring deals ---
   proPlayers(G).concat(Object.values(G.players).filter(p => p.fa)).forEach(p => {
     const old = p.age >= 38 || (p.age >= 35 && chance(.5)) || (p.age >= 31 && p.ovr < 72 && chance(.45)) || (p.fa && (p.age >= 29 || p.ovr < 64));
@@ -56,7 +59,7 @@ function beginOffseason(G){
   pool.sort((a, b) => draftValue(b) - draftValue(a));
   pool.slice(420).forEach(p => { p.ret = G.year; if (!notable(p)) dropP(G, p); });
   const order = G.pro.slice().sort((a, b) => { const d = t => { const r = (t.hist[t.hist.length - 1] || {}).post || ""; return r === "Won Pocket Bowl" ? 5 : r === "Lost Pocket Bowl" ? 4 : /Conf/.test(r) ? 3 : /Div/.test(r) ? 2 : /Wild/.test(r) ? 1 : 0; }; return d(a) - d(b) || winPct(a) - winPct(b); }).map(t => t.id);
-  G.draft = { pool: pool.slice(0, 420).map(p => p.id), order: applyPickOwn(G, order), pick: 0, log: [], done: false, rank: {} };
+  G.draft = { pool: pool.slice(0, 420).map(p => p.id), order: applyPickOwn(G, order).concat(compPicks(G)), pick: 0, log: [], done: false, rank: {} };
   G.draft.pool.forEach((id, i) => (G.draft.rank[id] = i + 1)); G.ivLeft = 30;
   // --- transfer portal entries ---
   G.portal = [];
@@ -65,6 +68,7 @@ function beginOffseason(G){
     const buried = i >= STARTERS[pos] && p.ovr >= 66 && p.cls >= 1, big = i < STARTERS[pos] && p.ovr >= 76 && t.prestige < 66;
     if ((buried && chance(.3)) || (big && chance(.35)) || chance(.012)) { p.portal = 1; G.portal.push(p.id); } }));
   });
+  promiseReview(G);
   genRecruits(G);
   G.pitchLeft = 15 + (G.bonusPitch || 0) + staffBonus(G, "rc"); G.bonusPitch = 0; G.pitches = {}; nilReset(G);
   if (G.mode === "pro") G.ivLeft += staffBonus(G, "sc") * 2 + ((G.fac || {}).recruit || 0) * 3;
@@ -80,8 +84,8 @@ function jobOffers(G){
 
 /* --- pro roster moves --- */
 function resign(G, p, yrs){ p.c = { amt: askOf(G, p), yrs: yrs || 3 }; delete p.expiring; p.tx.push([G.year, `Re-signed with the ${T(G, p.tid).nick} (${yrs || 3} yr, ${money(p.c.amt)})`]); }
-function releaseP(G, p){ p.tx.push([G.year, `Released by the ${T(G, p.tid).nick}`]); toFA(G, p); }
-function signFA(G, p, tid, yrs, amt){ const t = T(G, tid); p.c = { amt: amt || askOf(G, p), yrs: yrs || 2 }; delete p.fa; delete p.expiring; moveP(G, p, tid); if (p.exp == null) p.exp = 0; p.tx.push([G.year, `Signed with the ${t.nick} (${p.c.yrs} yr, ${money(p.c.amt)})`]); }
+function releaseP(G, p){ if (p.c && p.c.gtd) { G.dead = G.dead || {}; G.dead[p.tid] = +((G.dead[p.tid] || 0) + p.c.amt * p.c.gtd).toFixed(2); } p.tx.push([G.year, `Released by the ${T(G, p.tid).nick}`]); toFA(G, p); }
+function signFA(G, p, tid, yrs, amt){ const t = T(G, tid); if (G.phase === "off" && p.lastT != null && p.lastT !== tid && p.exp) { const v = playerVal(p); G.faNet = G.faNet || {}; G.faNet[p.lastT] = (G.faNet[p.lastT] || 0) - v; G.faNet[tid] = (G.faNet[tid] || 0) + v; } p.c = { amt: amt || askOf(G, p), yrs: yrs || 2 }; delete p.fa; delete p.expiring; moveP(G, p, tid); if (p.exp == null) p.exp = 0; p.tx.push([G.year, `Signed with the ${t.nick} (${p.c.yrs} yr, ${money(p.c.amt)})`]); }
 const freeAgents = G => Object.values(G.players).filter(p => p.fa).sort((a, b) => b.ovr - a.ovr);
 function aiResign(G){
   proPlayers(G).filter(p => p.expiring).forEach(p => {
@@ -166,7 +170,7 @@ function genRecruits(G){
   G.rec.forEach((id, i) => (G.players[id].rk = i + 1));
 }
 const homeBonus = (p, t) => { const st = p.home.slice(-2); return st === t.state ? 9 : REGION[st] && REGION[st] === REGION[t.state] ? 4 : 0; };
-function schoolPull(G, p, t, noise){ return t.prestige + homeBonus(p, t) + (noise ? gauss(0, 6) : 0) + (isUser(G, t.id) ? (G.pitches[p.id] || 0) * (G.scouted[p.id] ? 13 : 10) + (G.perks.rec || 0) * 2 + nilPull(p, G.nil && G.nil.deals[p.id]) + ((G.fac || {}).recruit || 0) : 0) + prioBonus(p, t) + (t.coach.ovr - 60) * .08; }
+function schoolPull(G, p, t, noise){ return t.prestige + homeBonus(p, t) + (noise ? gauss(0, 6) : 0) + (isUser(G, t.id) ? (G.pitches[p.id] || 0) * (G.scouted[p.id] ? 13 : 10) + (G.perks.rec || 0) * 2 + nilPull(p, G.nil && G.nil.deals[p.id]) + ((G.fac || {}).recruit || 0) + (p.promise && p.promiseBy === t.id ? 8 : 0) - (G.brokenWord === G.year + 1 ? 3 : 0) : 0) + prioBonus(p, t) + (t.coach.ovr - 60) * .08; }
 // The three schools most likely to land a recruit, as things stand (no luck applied).
 function recruitLeaders(G, p){
   const open = G.col.filter(t => t.id !== p.tid && rosterOf(G, t.id).filter(x => x.pos === p.pos && !x.portal).length + (G._signed && G._signed[t.id + p.pos] || 0) < COL_NEED[p.pos] + (p.portal ? 1 : 0));

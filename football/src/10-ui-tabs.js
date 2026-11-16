@@ -171,7 +171,7 @@ function CollegeTab(){
       {tab === "Rivalries" && <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">{G.riv.slice().sort((a, b) => ((b.a === G.uid || b.b === G.uid) ? 1 : 0) - ((a.a === G.uid || a.b === G.uid) ? 1 : 0)).map(r => { const a = T(G, r.a), b = T(G, r.b), l = r.last[0]; return (
         <div key={r.i} className="card p-3 relative overflow-hidden"><div className="absolute inset-0 opacity-25" style={{ background: `linear-gradient(110deg, ${a.c1} 0 50%, ${b.c1} 50% 100%)` }} /><div className="relative"><div className="disp text-base truncate">{r.name}</div><div className="text-[10px] text-amber-300/90 mb-2">{r.trophy}{r.holder != null ? " — held by " + T(G, r.holder).name : ""}</div>
           <div className="flex items-center justify-between text-sm"><span className="flex items-center gap-1.5"><Badge t={a} size={15} /><TeamLink t={a} /></span><span className="disp text-lg tnum">{r.aw}–{r.bw}</span><span className="flex items-center gap-1.5"><TeamLink t={b} /><Badge t={b} size={15} /></span></div>
-          <div className="text-[10px] text-slate-400 mt-1.5">{l ? `${l[0]}: ${T(G, l[1]).abbr} ${l[2]}, ${T(G, l[3]).abbr} ${l[4]}` : "Not yet played in this save"}</div></div></div>); })}</div>}
+          <div className="text-[10px] text-slate-400 mt-1.5">{l ? `${l[0]}: ${T(G, l[1]).abbr} ${l[2]}, ${T(G, l[3]).abbr} ${l[4]}` : "Not yet played in this save"}</div></div></div>); })}<div className="sm:col-span-2 lg:col-span-3"><RivalryHistory /></div></div>}
     </div>
   </div>);
 }

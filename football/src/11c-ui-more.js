@@ -82,12 +82,14 @@ function StaffTab(){
   const what = (k, c) => k === "oc" ? `${c.scheme} · offense ${c.ovr >= 70 ? "+" : ""}${((c.ovr - 70) * .05).toFixed(1)}` : k === "dc" ? `${c.scheme} · defense ${c.ovr >= 70 ? "+" : ""}${((c.ovr - 70) * .05).toFixed(1)}` : k === "rc" ? `+${Math.max(0, round((c.ovr - 62) / 7))} recruiting pitches a year` : `+${Math.max(0, round((c.ovr - 62) / 7)) * 2} draft interviews`;
   return (<div className="space-y-3">
     <SeatMeter />
+    <FanCard />
     <div className="grid md:grid-cols-3 gap-3">{roles.map(([k, label]) => { const c = st[k]; if (!c) return null; return (
       <div key={k} className="card p-3"><div className="text-[10px] uppercase tracking-widest text-slate-500">{label}{c.interim ? " · interim" : ""}</div>
         <div className="flex items-center gap-3 mt-1"><Ring v={c.ovr} label="OVR" size={56} /><div className="min-w-0"><div className="font-bold truncate">{c.name}</div><div className="text-[11px] text-slate-400">Age {c.age} · since {c.since}</div><div className="text-[11px] text-slate-300">{what(k, c)}</div></div></div>
         <div className="mt-2"><Btn small disabled={(G.staffHired || {})[k]} onClick={() => setOpen(open === k ? null : k)}>{(G.staffHired || {})[k] ? "Hired this year" : open === k ? "Close" : "See candidates"}</Btn></div>
         {open === k && <div className="mt-2 space-y-1.5 page-in">{(pool[k] || []).map((x, i) => <div key={i} className="flex items-center gap-2 text-xs bg-white/5 rounded-lg px-2 py-1.5"><Ovr v={x.ovr} /><div className="flex-1 min-w-0"><div className="font-semibold truncate">{x.name}</div><div className="text-[10px] text-slate-400 truncate">age {x.age} · {what(k, x)}</div></div><Btn small kind="pri" onClick={() => { ui.act(G => hireStaff(G, k, i)); setOpen(null); }}>Hire</Btn></div>)}{!(pool[k] || []).length && <div className="text-[11px] text-slate-500">No candidates left this year.</div>}</div>}
       </div>); })}</div>
+    <TreeCard />
     <Card title="Default game plan" right="follows your coordinators' schemes until you change it"><PlanControls /></Card>
     <Card title="Facilities" right={<span>Paid for with Legacy Points · you have <b className="text-amber-300">{G.lp || 0} ◆</b></span>}>
       <div className="grid sm:grid-cols-2 gap-3">{FAC(G).map(([k, name, desc]) => { const lv = fac[k] || 0, cost = FAC_COST[lv]; return <div key={k} className="bg-white/5 rounded-xl p-3"><div className="flex items-center justify-between"><div className="font-bold text-sm">{name}</div><div className="flex gap-1">{[0, 1, 2, 3, 4].map(i => <span key={i} className="w-4 h-1.5 rounded-full" style={{ background: i < lv ? "var(--acc)" : "#1c2742" }} />)}</div></div><div className="text-[11px] text-slate-400 mt-0.5">{desc}</div>
