@@ -6,7 +6,8 @@
   "redirects": [
     { "source": "/soccer", "destination": "/soccer/", "permanent": false },
     { "source": "/baseball", "destination": "/baseball/", "permanent": false },
-    { "source": "/hockey", "destination": "/hockey/", "permanent": false }
+    { "source": "/hockey", "destination": "/hockey/", "permanent": false },
+    { "source": "/football", "destination": "/football/", "permanent": false }
   ],
   "headers": [
     {

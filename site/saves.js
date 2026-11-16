@@ -18,11 +18,11 @@
  * iOS apps inject it to export their saves before they're retired.
  */
 (function () {
-  const DBS = ["pgsoccer_db", "pgbaseball_db", "pgmh"];
+  const DBS = ["pgsoccer_db", "pgbaseball_db", "pgmh", "pgfootball_db"];
   const STORE = "saves";
   // Hockey caches its Babel output under pgmh:build:<hash>; that's not a save.
   const isSaveKey = k =>
-    (k.startsWith("pgsoccer_") || k.startsWith("pocketgm_") || k.startsWith("pgmh:")) &&
+    (k.startsWith("pgsoccer_") || k.startsWith("pocketgm_") || k.startsWith("pgmh:") || k.startsWith("pgfootball_")) &&
     !k.startsWith("pgmh:build:");
 
   function openDb(name) {
@@ -93,17 +93,18 @@
     try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? fallback : v; } catch (e) { return fallback; }
   };
 
-  /** Merge a backup in. Returns { soccer, baseball, hockey, skipped: [...] } counts. */
+  /** Merge a backup in. Returns { soccer, baseball, hockey, football, skipped: [...] } counts. */
   async function importBackup(b) {
     if (!b || b.format !== "pocketgm-saves") throw new Error("That file isn't a Pocket GM saves backup.");
     const ls = b.localStorage || {};
     const idb = b.idb || {};
-    const added = { soccer: 0, baseball: 0, hockey: 0, skipped: [] };
+    const added = { soccer: 0, baseball: 0, hockey: 0, football: 0, skipped: [] };
 
     // soccer + baseball: unique slot ids, so just add what isn't here yet.
     const idGames = [
       { game: "soccer", index: "pgsoccer_slots", prefix: "pgsoccer_slot_", db: "pgsoccer_db" },
       { game: "baseball", index: "pocketgm_slots", prefix: "pocketgm_slot_", db: "pgbaseball_db" },
+      { game: "football", index: "pgfootball_slots", prefix: "pgfootball_slot_", db: "pgfootball_db" },
     ];
     for (const g of idGames) {
       const mine = readJson(g.index, []);

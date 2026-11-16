@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * Builds Pocket GM — the menu plus all three games — into one folder.
+ * Builds Pocket GM — the menu plus all four games — into one folder.
  *
- * The games live in this repo (soccer/, baseball/, hockey/). This copies them
+ * The games live in this repo (soccer/, baseball/, hockey/, football/). This copies them
  * next to the menu, drops the development files, and adds a small "all games"
  * button to each so you can get back to the menu without a browser back button.
  *
@@ -21,12 +21,12 @@ const SITE = path.join(ROOT, "site");
 const IOS = process.argv.includes("--ios");
 const OUT = IOS ? path.join(ROOT, "ios", "PocketGM", "Web") : path.join(ROOT, "dist");
 
-const GAMES = ["soccer", "baseball", "hockey"];
+const GAMES = ["soccer", "baseball", "hockey", "football"];
 
 // Development files that have no business being served to players.
 const PRUNE = [
   ".git", ".github", ".claude", ".gitignore", ".DS_Store",
-  "tools", "CLAUDE.md", "DAILY-LOG.md", "ROADMAP.md", "README.md", "LICENSE",
+  "tools", "src", "CLAUDE.md", "DAILY-LOG.md", "ROADMAP.md", "README.md", "LICENSE",
 ];
 
 const edit = (file, fn) => {
@@ -72,7 +72,7 @@ if (IOS) {
   // The "put it on your home screen" panel and the browser wording mean nothing
   // inside the app.
   edit(path.join(OUT, "index.html"), s => s
-    .replace(/href="(soccer|baseball|hockey)\/"/g, 'href="$1/index.html"')
+    .replace(/href="(soccer|baseball|hockey|football)\/"/g, 'href="$1/index.html"')
     .replace(/\s*<section class="panel">[\s\S]*?<\/section>/, "")
     .replace("run entirely in your browser. No account, no install required,", "run entirely on your phone. No account, no internet needed,"));
 }

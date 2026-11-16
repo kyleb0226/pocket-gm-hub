@@ -1,6 +1,6 @@
 # Pocket GM — context
 
-**One app, three games.** Soccer, baseball and hockey GM sims live together in this repo, with
+**One app, four games.** Soccer, baseball, hockey and football GM sims live together in this repo, with
 a menu page in front of them. The same build ships as a website (Vercel) and as one iOS app.
 
 | Folder | What | Started life as |
@@ -8,6 +8,7 @@ a menu page in front of them. The same build ships as a website (Vercel) and as 
 | `soccer/` | Pocket GM — Soccer | `kyleb0226/soccer-gm` (now `soccer-gm-OBS`) |
 | `baseball/` | Pocket GM — Baseball | `kyleb0226/baseball-gm` (now `baseball-gm-OBS`) |
 | `hockey/` | Pocket GM — Hockey | `kyleb0226/hockey-gm` (now `hockey-gm-OBS`) |
+| `football/` | Pocket GM — Football (college + pro) | built here, Nov 2026 — edit `football/src/`, see its CLAUDE.md |
 | `site/` | menu page, `saves.js`, hub worker, icons | — |
 | `ios/` | the one iOS app (WKWebView) | replaced three single-game wrappers |
 
@@ -27,7 +28,7 @@ save slots, a season loop, draft/FA/trades, awards, history — so most systems 
 - If it genuinely doesn't fit a game, say so in the commit message rather than skipping silently.
 - Prefer the same names, UI placement and wording across games, so they feel like one app.
 - Run every game's harness before committing: `node soccer/tools/simtest.js`,
-  `node baseball/tools/simtest.js`, `node hockey/tools/simtest.js`.
+  `node baseball/tools/simtest.js`, `node hockey/tools/simtest.js`, `node football/tools/simtest.js`.
 
 ## Build
 
@@ -70,6 +71,7 @@ app). Their keys don't collide:
 | soccer | `pgsoccer_slots`, `pgsoccer_slot_*` | `pgsoccer_db` |
 | baseball | `pocketgm_slots`, `pocketgm_slot_*`, `pocketgm_baseball_v2` | `pgbaseball_db` |
 | hockey | `pgmh:meta0-2`, `pgmh:slot0-2` (`pgmh:build:*` is a Babel cache) | `pgmh` |
+| football | `pgfootball_slots` | `pgfootball_db` (`pgfootball_slot_*`) |
 
 **Before adding a fourth game, check its keys against this table**, and teach `site/saves.js` about
 it. A collision reads as "my franchise disappeared".

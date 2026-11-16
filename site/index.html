@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Pocket GM — Soccer, Baseball, Hockey</title>
-<meta name="description" content="Three single-file management sims: run a football club, a baseball front office, or a hockey team. Free, offline-capable, saves in your browser." />
+<meta name="description" content="Four single-file management sims: run a soccer club, a baseball front office, a hockey team, or a football program. Free, offline-capable, saves in your browser." />
 <link rel="manifest" href="manifest.json" />
 <link rel="apple-touch-icon" href="apple-touch-icon.png" />
 <link rel="icon" href="icon-192.png" />
@@ -24,6 +24,7 @@
     --soccer: #34d399;
     --baseball: #f87171;
     --hockey: #60a5fa;
+    --football: #fbbf24;
   }
   * { box-sizing: border-box; }
   html { -webkit-text-size-adjust: 100%; }
@@ -55,7 +56,7 @@
   .tag { color: var(--muted); margin: 0 auto; max-width: 34rem; font-size: 15px; }
 
   .games { display: grid; gap: 14px; grid-template-columns: 1fr; }
-  @media (min-width: 720px) { .games { grid-template-columns: repeat(3, 1fr); } }
+  @media (min-width: 720px) { .games { grid-template-columns: repeat(2, 1fr); } }
 
   .game {
     display: flex; flex-direction: column; gap: 10px;
@@ -127,9 +128,10 @@
       <i style="background:var(--soccer)"></i>
       <i style="background:var(--baseball)"></i>
       <i style="background:var(--hockey)"></i>
+      <i style="background:var(--football)"></i>
     </span>
     <h1>Pocket GM</h1>
-    <p class="tag">Three management sims that run entirely in your browser. No account, no install required, saves stay on your device.</p>
+    <p class="tag">Four management sims that run entirely in your browser. No account, no install required, saves stay on your device.</p>
   </header>
 
   <main class="games">
@@ -153,11 +155,18 @@
       <p>32 clubs, a hard salary cap, four forward lines and three defence pairs. Shots come out of line-vs-line matchups.</p>
       <span class="play">Play</span>
     </a>
+
+    <a class="game" href="football/" style="--accent: var(--football)">
+      <span class="badge">🏈</span>
+      <h2>Football</h2>
+      <p>138 college programs in their real conferences and a 32-team pro league. Chase the Heisman, the playoff and the Pocket Bowl.</p>
+      <span class="play">Play</span>
+    </a>
   </main>
 
   <section class="panel saves">
     <h3>Your saves</h3>
-    <p>Back up every franchise from all three games to one file, or restore a backup — including one exported from the old single-game apps. Restoring adds careers; it never replaces one that's already here.</p>
+    <p>Back up every franchise from all four games to one file, or restore a backup — including one exported from the old single-game apps. Restoring adds careers; it never replaces one that's already here.</p>
     <div class="save-actions">
       <button id="backup" type="button">Back up all saves</button>
       <button id="restore" type="button">Restore from a backup</button>
@@ -256,7 +265,7 @@
   document.getElementById('restore').addEventListener('click', () => restoreFile.click());
   window.pgmRestore = async json => {
     const r = await PGMSaves.importBackup(typeof json === 'string' ? JSON.parse(json) : json);
-    const parts = ['soccer', 'baseball', 'hockey'].filter(g => r[g]).map(g => `${r[g]} ${g}`);
+    const parts = ['soccer', 'baseball', 'hockey', 'football'].filter(g => r[g]).map(g => `${r[g]} ${g}`);
     status((parts.length ? `Restored ${parts.join(', ')} save${parts.length > 1 || r[parts[0]] > 1 ? 's' : ''}.` : 'Nothing new to restore — those saves are already here.') +
       (r.skipped.length ? ` Skipped: ${r.skipped.join('; ')}.` : ''));
     return r;

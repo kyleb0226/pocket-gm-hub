@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Pocket GM — Football</title>
+<link rel="manifest" href="manifest.json" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Football GM" />
+<link rel="apple-touch-icon" href="apple-touch-icon.png" />
+<meta name="theme-color" content="#070b14" />
+<script src="vendor/react.production.min.js"></script>
+<script src="vendor/react-dom.production.min.js"></script>
+<script src="vendor/babel.min.js"></script>
+<script src="vendor/tailwind.js"></script>
+<style>
+  :root { --acc:#38bdf8; --acc2:#f8fafc; --bg:#070b14; --card:#0f1626; --card2:#141d31; --line:#1f2a44; }
+  html { -webkit-text-size-adjust:100%; }
+  body { background:var(--bg); color:#e5e9f2; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; -webkit-tap-highlight-color:transparent; padding:env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); }
+  ::-webkit-scrollbar{width:9px;height:9px} ::-webkit-scrollbar-thumb{background:#27324a;border-radius:6px} ::-webkit-scrollbar-track{background:transparent}
+  .tnum{font-variant-numeric:tabular-nums}
+  .disp{font-family:"Avenir Next Condensed","Barlow Condensed","Arial Narrow","Helvetica Neue",sans-serif;font-weight:800;font-style:italic;text-transform:uppercase;letter-spacing:.01em;line-height:1}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px}
+  .acc{color:var(--acc)} .bg-acc{background:var(--acc)} .bd-acc{border-color:var(--acc)}
+  .link{cursor:pointer} .link:hover{text-decoration:underline;text-decoration-color:var(--acc)}
+  table.st{width:100%;border-collapse:collapse;font-size:12px} table.st th{font-weight:600;color:#8693b0;text-align:right;padding:5px 7px;white-space:nowrap;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--card)}
+  table.st td{text-align:right;padding:5px 7px;white-space:nowrap;border-bottom:1px solid rgba(31,42,68,.55)} table.st th.l,table.st td.l{text-align:left}
+  table.st tbody tr:hover{background:rgba(255,255,255,.03)}
+  @keyframes pageIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}} .page-in{animation:pageIn .28s cubic-bezier(.2,.7,.2,1) both}
+  @keyframes modalIn{from{opacity:0;transform:translateY(28px) scale(.985)}to{opacity:1;transform:none}} .modal-in{animation:modalIn .3s cubic-bezier(.2,.8,.2,1) both}
+  @keyframes fadeIn{from{opacity:0}to{opacity:1}} .fade-in{animation:fadeIn .35s both}
+  @keyframes pop{0%{transform:scale(.6);opacity:0}70%{transform:scale(1.08)}100%{transform:scale(1);opacity:1}} .pop{animation:pop .5s cubic-bezier(.2,.8,.2,1) both}
+  @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}} .rise{animation:rise .45s cubic-bezier(.2,.7,.2,1) both}
+  @keyframes grow{from{transform:scaleX(0)}to{transform:scaleX(1)}} .grow{transform-origin:left;animation:grow .9s cubic-bezier(.2,.7,.2,1) both}
+  @keyframes growY{from{transform:scaleY(0)}to{transform:scaleY(1)}} .growY{transform-origin:bottom;animation:growY .8s cubic-bezier(.2,.7,.2,1) both}
+  @keyframes draw{from{stroke-dashoffset:var(--len,1200)}to{stroke-dashoffset:0}} .draw{stroke-dasharray:var(--len,1200);animation:draw 1.2s ease-out both}
+  @keyframes kenburns{from{transform:scale(1.04) translate(0,0)}to{transform:scale(1.16) translate(-1.5%,-2%)}} .kenburns{animation:kenburns 9s ease-out both}
+  @keyframes flicker{0%,100%{opacity:.85}50%{opacity:1}} .flicker{animation:flicker 3.2s ease-in-out infinite}
+  @keyframes snow{from{transform:translateY(-20px)}to{transform:translateY(470px)}} .snow{animation:snow linear infinite}
+  @keyframes twinkle{0%,100%{opacity:.25}50%{opacity:1}} .twinkle{animation:twinkle 2.6s ease-in-out infinite}
+  @keyframes confetti{0%{transform:translateY(-10vh) rotate(0)}100%{transform:translateY(110vh) rotate(720deg)}} .confetti{position:fixed;top:0;width:9px;height:14px;z-index:80;pointer-events:none;animation:confetti linear forwards}
+  @keyframes sheen{from{background-position:-200% 0}to{background-position:200% 0}} .sheen{background:linear-gradient(100deg,transparent 30%,rgba(255,255,255,.14) 50%,transparent 70%);background-size:200% 100%;animation:sheen 2.8s linear infinite}
+  @keyframes pulseRing{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--acc) 60%,transparent)}100%{box-shadow:0 0 0 14px transparent}} .pulse{animation:pulseRing 1.6s ease-out infinite}
+  .scene-layer{position:absolute;inset:0;transition:opacity 1.6s ease}
+  .tabbtn{position:relative} .tabbtn.on::after{content:"";position:absolute;left:18%;right:18%;bottom:-1px;height:3px;border-radius:3px;background:var(--acc)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  @media (prefers-reduced-motion: reduce){ *{animation-duration:.01s !important;transition-duration:.01s !important} }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel-src" id="app-src">
+/*__APP__*/
+</script>
+<script>
+  (function(){
+    try {
+      var src = document.getElementById("app-src").textContent;
+      var out = Babel.transform(src, { presets: [["react", { runtime: "classic" }]] }).code;
+      (0, eval)(out);
+    } catch (e) {
+      document.getElementById("root").innerHTML = '<pre style="color:#f87171;padding:16px;white-space:pre-wrap">App failed to start:\n' + (e && (e.stack || e.message || e)) + '</pre>';
+      console.error(e);
+    }
+  })();
+</script>
+<script>
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    window.addEventListener('load', function(){ navigator.serviceWorker.register('sw.js').then(function(reg){ reg.update(); }).catch(function(){}); });
+  }
+</script>
+</body>
+</html>

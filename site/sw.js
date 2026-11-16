@@ -7,8 +7,8 @@
  * opened. Passing through (no respondWith) leaves the browser's default fetch in
  * charge, so the hub can never serve a stale copy of a game.
  */
-const CACHE = "pocketgm-hub-v3";
-const GAMES = ["soccer/", "baseball/", "hockey/"].map(g => new URL(g, self.registration.scope).pathname);
+const CACHE = "pocketgm-hub-v4";
+const GAMES = ["soccer/", "baseball/", "hockey/", "football/"].map(g => new URL(g, self.registration.scope).pathname);
 const SHELL = [
   "./",
   "index.html",

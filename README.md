@@ -8,6 +8,7 @@ website and as one iOS app, fully offline, with saves kept on your device.
 | `soccer/` | Pocket GM — Soccer |
 | `baseball/` | Pocket GM — Baseball |
 | `hockey/` | Pocket GM — Hockey |
+| `football/` | Pocket GM — Football |
 | `site/` | the menu page and save backup/restore |
 | `ios/` | the iOS app |
 
