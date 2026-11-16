@@ -26,7 +26,7 @@ const GAMES = ["soccer", "baseball", "hockey", "football"];
 // Development files that have no business being served to players.
 const PRUNE = [
   ".git", ".github", ".claude", ".gitignore", ".DS_Store",
-  "tools", "src", "CLAUDE.md", "DAILY-LOG.md", "ROADMAP.md", "README.md", "LICENSE",
+  "tools", "src", "CLAUDE.md", "HANDOFF.md", "DAILY-LOG.md", "ROADMAP.md", "README.md", "LICENSE",
 ];
 
 const edit = (file, fn) => {
