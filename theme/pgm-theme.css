@@ -1,0 +1,77 @@
+/* Pocket GM house look, taken from the football game and laid over soccer, baseball and hockey.
+   build.js inlines this into each of those games; nothing here changes how they work.
+   Selectors lean on the games' own Tailwind classes ([class~="x"] matches one whole class,
+   so hover:bg-… variants are left alone). */
+html[data-game]{--bg:#070b14;--card:#0f1626;--card2:#141d31;--line:#1f2a44;--acc:#34d399;--team:var(--acc);--disp:"Avenir Next Condensed","Barlow Condensed","Arial Narrow","Helvetica Neue",sans-serif}
+html[data-game="hockey"]{--acc:#38bdf8}
+html[data-game="baseball"]{--acc:#34d399}
+html[data-game]{background:var(--bg)!important}
+html[data-game] body{background:transparent!important;color:#e5e9f2;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-tap-highlight-color:transparent}
+
+/* stadium at night: two banks of lights, a wash of the club colour, faint yard lines */
+html[data-game] body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;background:
+  radial-gradient(ellipse 46% 30% at 8% -4%,rgba(255,255,255,.13),transparent 62%),
+  radial-gradient(ellipse 46% 30% at 92% -4%,rgba(255,255,255,.13),transparent 62%),
+  radial-gradient(ellipse 95% 46% at 50% -12%,color-mix(in srgb,var(--team) 26%,transparent),transparent 72%),
+  repeating-linear-gradient(0deg,transparent 0 58px,rgba(255,255,255,.014) 58px 59px)}
+html[data-game] ::-webkit-scrollbar{width:9px;height:9px}
+html[data-game] ::-webkit-scrollbar-thumb{background:#27324a;border-radius:6px}
+html[data-game] ::-webkit-scrollbar-track{background:transparent}
+
+/* surfaces */
+html[data-game] [class~="bg-[#101a30]"],html[data-game] [class~="bg-[#111c30]"],html[data-game] [class~="bg-[#0d1526]"],html[data-game] [class~="bg-[#0d1728]"],html[data-game] [class~="bg-[#0f1a2e]"]{background-color:var(--card)!important}
+html[data-game] [class~="bg-[#16213a]"],html[data-game] [class~="bg-[#13203a]"],html[data-game] [class~="bg-[#18243c]"],html[data-game] [class~="bg-[#22314f]"]{background-color:var(--card2)!important}
+html[data-game] [class~="bg-[#0b1220]"],html[data-game] [class~="bg-[#0b1220]/95"]{background-color:rgba(7,11,20,.84)!important;-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
+html[data-game] [class~="border-[#1d2940]"],html[data-game] [class~="border-[#15203a]"],html[data-game] [class~="border-[#1e2b45]"],html[data-game] [class~="border-[#141d30]"],html[data-game] [class~="border-[#16223a]"],html[data-game] [class~="border-[#243250]"]{border-color:var(--line)!important}
+html[data-game] .rounded-xl{border-radius:14px!important}
+html[data-game] .rounded-2xl{border-radius:18px!important}
+html[data-game] main [class~="rounded-xl"][class~="border"],html[data-game] #root>div>.max-w-6xl [class~="rounded-xl"][class~="border"]{box-shadow:0 1px 0 rgba(255,255,255,.025) inset,0 8px 24px rgba(0,0,0,.18)}
+
+/* the top bar carries the club colour */
+html[data-game] header,html[data-game] #root>div>.sticky.top-0{background:linear-gradient(100deg,color-mix(in srgb,var(--team) 34%,#0b111e) 0%,#0b111e 58%,#090e19 100%)!important;border-bottom:1px solid var(--line)!important;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+html[data-game] header>.font-black{font-family:var(--disp);font-style:italic;font-weight:800;text-transform:uppercase;font-size:24px;letter-spacing:.01em;line-height:1}
+html[data-game] header>.font-black+div{color:#e2e8f0;font-weight:600}
+html[data-game="hockey"] #root>div>.sticky.top-0>div:first-child>button:first-child{font-family:var(--disp);font-style:italic;font-weight:800;text-transform:uppercase;font-size:22px;letter-spacing:.01em;line-height:1.05}
+html[data-game] header [class~="rounded"],html[data-game] #root>div>.sticky.top-0>div:first-child [class~="rounded-lg"]{border-radius:9px;background-color:rgba(0,0,0,.32)!important;border:1px solid rgba(255,255,255,.07)}
+html[data-game="hockey"] #root>div>.sticky.top-0>div:first-child [class~="bg-sky-600"]{background-color:var(--acc)!important;color:#07101d!important;border-color:transparent;font-weight:700}
+
+/* main tabs: accent underline. sub tabs: pills */
+html[data-game] nav{background:rgba(7,11,20,.86)!important;-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)!important}
+html[data-game] nav>div:first-child button[class~="border-b-2"]{border-bottom-width:3px;border-radius:0;padding-bottom:9px;font-weight:600;color:#94a3b8}
+html[data-game] nav>div:first-child button[class~="border-b-2"]:not([class~="border-transparent"]){color:#fff!important;border-color:var(--acc)!important}
+html[data-game] nav>div:last-child button,html[data-game="hockey"] #root>div>.sticky.top-0>div:nth-child(3) button{border-radius:999px!important;border:1px solid #26324f;font-size:12px;font-weight:600;padding:6px 13px}
+html[data-game] nav>div:last-child button[class~="bg-emerald-500"],html[data-game="hockey"] #root>div>.sticky.top-0>div:nth-child(3) button[class~="bg-sky-600"]{background:var(--acc)!important;color:#07101d!important;border-color:transparent}
+html[data-game="hockey"] #root>div>.sticky.top-0>div:nth-child(2) button{border-radius:0!important;background:transparent!important;border-bottom:3px solid transparent;font-weight:700;letter-spacing:.08em;padding:8px 10px 7px}
+html[data-game="hockey"] #root>div>.sticky.top-0>div:nth-child(2) button[class~="text-slate-100"]{border-bottom-color:var(--acc);color:#fff}
+
+/* display type: the condensed italic that football uses for names and big numbers */
+html[data-game] .fixed.inset-0 .text-xl,html[data-game] .fixed.inset-0 .text-2xl,html[data-game] .fixed.inset-0 .text-lg.font-bold,html[data-game] .fixed.inset-0 .text-lg.font-semibold,html[data-game] main .text-xl,html[data-game] main .text-lg.font-bold,html[data-game] main .text-lg.font-semibold,html[data-game] #root>div>.max-w-6xl .text-xl,html[data-game] #root>div>.max-w-6xl .text-lg.font-semibold,html[data-game] #root>div>.max-w-6xl .text-lg.font-bold,html[data-game] .font-black,html[data-game] main .text-2xl,html[data-game] main .text-3xl,html[data-game] main .text-4xl,html[data-game] #root>div>.max-w-6xl .text-2xl,html[data-game] #root>div>.max-w-6xl .text-3xl,html[data-game] h1,html[data-game] h2{font-family:var(--disp);font-style:italic;font-weight:800;text-transform:uppercase;letter-spacing:.01em;line-height:1.05}
+html[data-game] main [class~="rounded-xl"]>.font-semibold:first-child,html[data-game] main [class~="rounded-xl"]>.font-bold:first-child,html[data-game] main [class~="rounded-xl"]>div:first-child>.font-semibold:first-child,html[data-game="hockey"] [class~="rounded-xl"]>.border-b:first-child>.font-medium:first-child{font-family:var(--disp);font-style:italic;font-weight:800;text-transform:uppercase;font-size:16px;letter-spacing:.02em;color:#e2e8f0}
+
+/* tables */
+html[data-game] table th{font-size:11px;font-weight:600;color:#8693b0;white-space:nowrap}
+html[data-game] table tbody tr{transition:background-color .12s}
+html[data-game] table tbody tr:hover{background-color:rgba(255,255,255,.035)}
+html[data-game] table td,html[data-game] table th{border-color:rgba(31,42,68,.6)}
+
+/* buttons */
+html[data-game] button{transition:transform .12s ease,filter .15s ease,background-color .15s ease,border-color .15s ease,color .15s ease}
+html[data-game] button:active:not(:disabled){transform:scale(.96)}
+html[data-game] button:disabled{opacity:.45;cursor:not-allowed}
+html[data-game] main button[class~="bg-emerald-500"],html[data-game] main button[class~="bg-emerald-600"],html[data-game] #root>div>.max-w-6xl button[class~="bg-sky-600"],html[data-game] #root>div>.max-w-6xl button[class~="bg-sky-500"]{background:var(--acc)!important;color:#07101d!important;font-weight:700;border-radius:10px}
+html[data-game] button[class~="bg-emerald-500"]:hover,html[data-game] button[class~="bg-sky-600"]:hover{filter:brightness(1.1)}
+html[data-game] main button[class~="rounded"],html[data-game] main button[class~="rounded-md"],html[data-game] main button[class~="rounded-lg"]{border-radius:10px}
+html[data-game] select,html[data-game] input[type="text"],html[data-game] input[type="number"],html[data-game] input[type="search"]{border-radius:9px}
+
+/* motion */
+@keyframes pgmPageIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes pgmModalIn{from{opacity:0;transform:translateY(26px) scale(.985)}to{opacity:1;transform:none}}
+@keyframes pgmFade{from{opacity:0}to{opacity:1}}
+html[data-game] main>div>*,html[data-game] #root>div>.max-w-6xl.p-3>div>*{animation:pgmPageIn .32s cubic-bezier(.2,.7,.2,1) both}
+html[data-game] main>div>*:nth-child(2),html[data-game] #root>div>.max-w-6xl.p-3>div>*:nth-child(2){animation-delay:.04s}
+html[data-game] main>div>*:nth-child(3),html[data-game] #root>div>.max-w-6xl.p-3>div>*:nth-child(3){animation-delay:.08s}
+html[data-game] main>div>*:nth-child(4),html[data-game] #root>div>.max-w-6xl.p-3>div>*:nth-child(4){animation-delay:.12s}
+html[data-game] main>div>*:nth-child(n+5),html[data-game] #root>div>.max-w-6xl.p-3>div>*:nth-child(n+5){animation-delay:.16s}
+html[data-game] .fixed.inset-0[class*="bg-black/"]{-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);animation:pgmFade .25s both}
+html[data-game] .fixed.inset-0[class*="bg-black/"]>div{animation:pgmModalIn .3s cubic-bezier(.2,.8,.2,1) both;box-shadow:0 30px 80px rgba(0,0,0,.6)}
+@media (prefers-reduced-motion:reduce){html[data-game] *{animation-duration:.01s!important;transition-duration:.01s!important}}

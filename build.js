@@ -48,6 +48,13 @@ function copyGame(slug) {
   const index = path.join(dest, "index.html");
   if (!fs.existsSync(index)) throw new Error(`${slug}: no index.html`);
   edit(index, s => s.replace(/<\/body>(?![\s\S]*<\/body>)/, homeButton(IOS ? "../index.html" : "../") + "</body>"));
+  // The house look (football's) is laid over the other games here rather than in their sources:
+  // theme/pgm-theme.css + .js are inlined, so each game still ships as one file and works offline.
+  if (slug !== "football") {
+    const css = fs.readFileSync(path.join(ROOT, "theme", "pgm-theme.css"), "utf8");
+    const js = fs.readFileSync(path.join(ROOT, "theme", "pgm-theme.js"), "utf8").replace("__GAME__", slug);
+    edit(index, s => s.replace("</head>", () => `<meta name="theme-color" content="#070b14" />\n<style id="pgm-theme">\n${css}</style>\n<script>\n${js}</script>\n</head>`));
+  }
   console.log(`  ${slug}`);
 }
 

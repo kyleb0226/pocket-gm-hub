@@ -46,6 +46,16 @@ Both outputs are generated and gitignored.
 Local preview: `node build.js && python3 -m http.server 8150 --directory dist` — registered in
 `~/.claude/launch.json` as `pocket-gm-hub` on port 8150.
 
+## One look across the games (`theme/`)
+
+Football's look is the house style. Soccer, baseball and hockey get it from `theme/pgm-theme.css`
++ `theme/pgm-theme.js`, which `build.js` inlines into their `index.html` at build time (football
+already has it natively). The games' sources are untouched: the stylesheet restyles their existing
+Tailwind classes (`[class~="bg-[#101a30]"]` etc.), and the script sets `data-game` and lifts the
+club colour out of each game's header into `--team`. If a game changes its header/nav markup or
+its hex colours, update the selectors there. It only shows in a build (`dist/`), not when a game's
+`index.html` is opened on its own.
+
 ## iOS app
 
 `ios/PocketGM.xcodeproj`, bundle id `com.kyle.PocketGM`, display name "Pocket GM". One WKWebView

@@ -137,6 +137,7 @@ function App(){
         {top && top[0] === "g" && <BoxScore key={"g" + top[1] + stack.length} gid={top[1]} onClose={pop} />}
         {top && top[0] === "i" && <InterviewModal key={"i" + top[1] + stack.length} pid={top[1]} onClose={pop} />}
         {ceremony && G.awards.col && <Ceremony onClose={() => setCeremony(false)} />}
+        {!ceremony && !busy && <DraftCalls />}
         {toastMsg && <div className="fixed left-1/2 -translate-x-1/2 bottom-20 z-[90] px-4 py-2.5 rounded-xl text-sm bg-slate-100 text-slate-950 font-semibold shadow-xl pop max-w-[90vw] text-center">{toastMsg}</div>}
       </div>
     </UICtx.Provider>
