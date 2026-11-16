@@ -40,6 +40,47 @@ function allTeams(G, pool, depth = 2){
 const bestOf = (pool, f) => { let b = null, bv = -1e9; for (const p of pool) { const v = f(p); if (v > bv) { bv = v; b = p; } } return bv > 0 ? b : null; };
 function coachScore(t, pro){ const exp = pro ? .5 : (t.prestige - 45) / 52 * .62 + .2; return (winPct(t) - exp) * 10 + winPct(t) * 4 + (t.rank && t.rank <= 10 ? 1 : 0); }
 
+// A panel of voters each ranks three names (5-3-1 points), drawn in proportion to how strong the
+// season was. `win` keeps an already-announced winner on top (used when back-filling old saves).
+function ballot(G, cands, n, win){
+  const c = cands.filter(x => x[0] && x[1] > 0).sort((a, b) => b[1] - a[1]).slice(0, 8).map(x => x.slice());
+  if (win != null && G.players[win]) { const i = c.findIndex(x => x[0].id === win), top = c.length ? c[0][1] : 1; if (i > 0) { const w = c.splice(i, 1)[0]; w[1] = top * 1.05; c.unshift(w); } else if (i < 0) { c.unshift([G.players[win], top * 1.05]); if (c.length > 8) c.length = 8; } }
+  if (!c.length) return [];
+  const v = c.map(([p]) => ({ p, pts: 0, first: 0, second: 0, third: 0 }));
+  for (let b = 0; b < n; b++) { const pool = c.map(([p, s], i) => [i, Math.pow(s / c[0][1], 9)]); [[5, "first"], [3, "second"], [1, "third"]].forEach(([pts, k]) => { if (!pool.some(x => x[1] > 0)) return; const i = wpick(pool); pool.find(x => x[0] === i)[1] = 0; v[i].pts += pts; v[i][k]++; }); }
+  v.sort((a, b) => b.pts - a.pts);
+  if (win != null && v[0].p.id !== win) { const i = v.findIndex(x => x.p.id === win); if (i > 0) { const a = v[0].p; v[0].p = v[i].p; v[i].p = a; } }
+  return v.filter(x => x.pts > 0);
+}
+function voteAward(G, A, name, cands, n, win){
+  const v = ballot(G, cands, n, win); if (!v.length) return null;
+  (A.votes || (A.votes = {}))[name] = v.slice(0, 6).map(x => Object.assign(ref(G, x.p), { pts: x.pts, first: x.first, second: x.second, third: x.third }));
+  v.slice(0, 5).forEach((x, i) => (x.p.av || (x.p.av = [])).push([G.year, name, i + 1, x.pts]));
+  return v[0].p;
+}
+// The awards that are decided by a vote: [name, candidate pool, score, note].
+function colVoted(G, all){
+  const tf = p => .72 + .4 * winPct(T(G, p.tid));
+  return [["Maxwell Award", all, p => seasonValue(p) * (posMult(p.pos) || 0) * (.9 + .1 * tf(p)), "Player of the year"],
+    ["Chuck Bednarik Award", all.filter(p => isDef(p.pos)), p => seasonValue(p) * tf(p), "Defensive player of the year"],
+    ["Shaun Alexander Freshman of the Year", all.filter(p => p.cls === 0), p => seasonValue(p) * (posMult(p.pos) || .9), "Top freshman"]];
+}
+function proVoted(G, all){
+  const tf = p => .7 + .45 * winPct(T(G, p.tid)), off = all.filter(p => isOff(p.pos) && GROUP(p.pos) !== "OL"), def = all.filter(p => isDef(p.pos));
+  return [["Most Valuable Player", off, p => seasonValue(p) * (p.pos === "QB" ? 1.2 : 1) * tf(p), "League MVP"],
+    ["Offensive Player of the Year", off, p => seasonValue(p) * (p.pos === "QB" ? .92 : 1.1), ""],
+    ["Defensive Player of the Year", def, p => seasonValue(p) * (.85 + .2 * tf(p)), ""],
+    ["Offensive Rookie of the Year", off.filter(p => p.exp === 0), p => seasonValue(p) * (p.pos === "QB" ? 1.1 : 1), ""],
+    ["Defensive Rookie of the Year", def.filter(p => p.exp === 0), p => seasonValue(p), ""]];
+}
+function allRookie(G, A, all){ const [ar] = allTeams(G, all.filter(p => p.exp === 0), 1); ar.forEach(p => p.aw.push([G.year, "All-Rookie Team"])); A.rook = ar.map(p => ref(G, p)); }
+// Saves made before award voting existed: add the ballots for this season's awards without changing who won.
+function backfillVotes(G){
+  const P = G.awards && G.awards.pro, C = G.awards && G.awards.col;
+  if (P && !P.votes) { const all = proPlayers(G).filter(p => (p.st.g || 0) >= 6); P.votes = {}; proVoted(G, all).forEach(([name, pool, f]) => { const w = P.list.find(x => x.a === name); if (w) voteAward(G, P, name, pool.map(p => [p, f(p)]), 50, w.pid); }); if (!P.rook) allRookie(G, P, all); }
+  if (C && !C.votes) { const all = colPlayers(G).filter(p => (p.st.g || 0) >= 5); C.votes = {}; colVoted(G, all).forEach(([name, pool, f]) => { const w = C.nat.find(x => x.a === name); if (w) voteAward(G, C, name, pool.map(p => [p, f(p)]), 100, w.pid); }); }
+}
+
 function collegeAwards(G){
   const all = colPlayers(G).filter(p => (p.st.g || 0) >= 5), A = G.awards.col = { nat: [], conf: {} };
   const tf = p => .72 + .4 * winPct(T(G, p.tid));
@@ -53,7 +94,8 @@ function collegeAwards(G){
   A.heis = votes.map(v => Object.assign(ref(G, v.p), { pts: v.pts, first: v.first, second: v.second, third: v.third }));
   news(G, `${hw.pos} ${pname(hw)} of ${ht.name} wins the Heisman Trophy with ${votes[0].first} first-place votes.`, "award", ht.id);
   const off = all.filter(p => isOff(p.pos) && GROUP(p.pos) !== "OL"), def = all.filter(p => isDef(p.pos)), at = (...ps) => all.filter(p => ps.includes(p.pos));
-  give("Maxwell Award", bestOf(all, p => seasonValue(p) * (posMult(p.pos) || 0) * (.9 + .1 * tf(p))), "Player of the year");
+  const CV = colVoted(G, all), vote = i => give(CV[i][0], voteAward(G, A, CV[i][0], CV[i][1].map(p => [p, CV[i][2](p)]), 100), CV[i][3]);
+  vote(0);
   give("Walter Camp Award", bestOf(all, p => seasonValue(p) * posMult(p.pos) * tf(p) * tf(p)), "Player of the year");
   give("Davey O'Brien Award", bestOf(at("QB"), p => seasonValue(p) * tf(p)), "Best quarterback");
   give("Johnny Unitas Golden Arm", bestOf(at("QB").filter(p => p.cls === 3), p => seasonValue(p) * tf(p)), "Top senior quarterback");
@@ -63,7 +105,7 @@ function collegeAwards(G){
   give("Paul Hornung Award", bestOf(off, p => Math.min(p.st.ry || 0, p.st.rcy || 0) * .5 + ((p.st.rtd || 0) && (p.st.rctd || 0) ? 40 : 0) + ((p.st.ry || 0) + (p.st.rcy || 0)) * .03), "Most versatile player");
   give("Outland Trophy", bestOf(at("OT", "OG", "C", "DT"), p => seasonValue(p) * (p.pos === "DT" ? 1 : 1.25) * tf(p)), "Best interior lineman");
   give("Rimington Trophy", bestOf(at("C"), p => seasonValue(p) * tf(p)), "Best center");
-  give("Chuck Bednarik Award", bestOf(def, p => seasonValue(p) * tf(p)), "Defensive player of the year");
+  vote(1);
   give("Bronko Nagurski Trophy", bestOf(def, p => seasonValue(p) * (.9 + .1 * tf(p)) + p.ovr * .3), "Best defensive player");
   give("Lombardi Award", bestOf(at("OT", "OG", "C", "DE", "DT", "LB"), p => seasonValue(p) * (GROUP(p.pos) === "OL" ? 1.3 : 1) * tf(p) + p.chr * .2), "Best lineman or linebacker");
   give("Ted Hendricks Award", bestOf(at("DE"), p => seasonValue(p)), "Best defensive end");
@@ -72,7 +114,7 @@ function collegeAwards(G){
   give("Lott IMPACT Trophy", bestOf(def.filter(p => p.chr >= 65), p => seasonValue(p) + p.chr), "Defensive impact and character");
   give("Lou Groza Award", bestOf(at("K"), p => seasonValue(p)), "Best kicker");
   give("Ray Guy Award", bestOf(at("P"), p => seasonValue(p)), "Best punter");
-  give("Shaun Alexander Freshman of the Year", bestOf(all.filter(p => p.cls === 0), p => seasonValue(p) * (posMult(p.pos) || .9)), "Top freshman");
+  vote(2);
   give("Newcomer of the Year", bestOf(all.filter(p => p.xfer === G.year), p => seasonValue(p) * (posMult(p.pos) || .9)), "Top transfer");
   give("Burlsworth Trophy", bestOf(all.filter(p => p.walkOn), p => seasonValue(p) * (posMult(p.pos) || .9) + p.ovr), "Best player who began as a walk-on");
   give("Comeback Player of the Year", bestOf(all.filter(p => p.bigInj === G.year - 1), p => seasonValue(p)), "Back from a season-ending injury");
@@ -111,11 +153,8 @@ function proAwards(G){
   const all = proPlayers(G).filter(p => (p.st.g || 0) >= 6), A = G.awards.pro = { list: [] }, tf = p => .7 + .45 * winPct(T(G, p.tid));
   const give = (name, p, note) => { if (!p) return; p.aw.push([G.year, name]); A.list.push(Object.assign({ a: name, note }, ref(G, p))); };
   const off = all.filter(p => isOff(p.pos) && GROUP(p.pos) !== "OL"), def = all.filter(p => isDef(p.pos));
-  give("Most Valuable Player", bestOf(off, p => seasonValue(p) * (p.pos === "QB" ? 1.2 : 1) * tf(p)), "League MVP");
-  give("Offensive Player of the Year", bestOf(off, p => seasonValue(p) * (p.pos === "QB" ? .92 : 1.1)), "");
-  give("Defensive Player of the Year", bestOf(def, p => seasonValue(p) * (.85 + .2 * tf(p))), "");
-  give("Offensive Rookie of the Year", bestOf(off.filter(p => p.exp === 0), p => seasonValue(p)), "");
-  give("Defensive Rookie of the Year", bestOf(def.filter(p => p.exp === 0), p => seasonValue(p)), "");
+  proVoted(G, all).forEach(([name, pool, f, note]) => { const w = voteAward(G, A, name, pool.map(p => [p, f(p)]), 50); give(name, w, note); if (w && isUser(G, w.tid)) { news(G, `Your ${w.pos} ${pname(w)} is the ${name}.`, "award", w.tid); gainLP(G, /Valuable/.test(name) ? 6 : 3, name); } });
+  allRookie(G, A, all);
   give("Comeback Player of the Year", bestOf(all.filter(p => p.bigInj === G.year - 1), p => seasonValue(p) * (posMult(p.pos) || .8)), "");
   give("Man of the Year", bestOf(all.filter(p => (p.st.gs || 0) >= 10), p => p.chr * 2 + seasonValue(p) * .05), "Community service");
   const coy = G.pro.slice().sort((a, b) => coachScore(b, 1) + (b.hist.length ? (winPct(b) - b.hist[b.hist.length - 1].w / 17) * 8 : 0) - coachScore(a, 1) - (a.hist.length ? (winPct(a) - a.hist[a.hist.length - 1].w / 17) * 8 : 0))[0];

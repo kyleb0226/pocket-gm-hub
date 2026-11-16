@@ -8,7 +8,7 @@
 const fs = require("fs"), path = require("path"), vm = require("vm");
 const ROOT = path.join(__dirname, "..");
 require("child_process").execFileSync("node", [path.join(__dirname, "assemble.js")], { stdio: "inherit" });
-const EXPORTS = ["newGame","simWeek","advanceOff","T","rosterOf","colPlayers","proPlayers","CONF_ORDER","CONFS","COL_NEED","PRO_NEED","POS","gameById","winnerOf","confStandings","draftRun","payroll","CAP","EV","chooseEvent","spawnEvent","buy","SHOP","LAST_WEEK","userGame","stripForSave","freeAgents","pitch","seen","teamPicks","evalTrade","doTrade","shopPlayer","aiTrades","playerVal","depthChart","tradeOpen","userTeam"];
+const EXPORTS = ["newGame","simWeek","advanceOff","T","rosterOf","colPlayers","proPlayers","CONF_ORDER","CONFS","COL_NEED","PRO_NEED","POS","gameById","winnerOf","confStandings","draftRun","payroll","CAP","EV","chooseEvent","spawnEvent","buy","SHOP","LAST_WEEK","userGame","stripForSave","freeAgents","pitch","seen","teamPicks","evalTrade","doTrade","shopPlayer","aiTrades","playerVal","depthChart","tradeOpen","userTeam","migrate","PRO_WEEKS"];
 function load(){
   const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
   const m = html.match(/<script type="text\/babel-src" id="app-src">([\s\S]*?)<\/script>/);
@@ -93,6 +93,22 @@ const CHECKS = {
       ok(drafted.length > 300, `${mode}: ${drafted.length} pros carry their college seasons on their record`);
       const pay = G.pro.map(t => A.payroll(G, t.id)); ok(Math.max(...pay) <= A.CAP + 40, `${mode}: payrolls sane (max $${Math.max(...pay).toFixed(0)}M)`);
     });
+  },
+  votes(A){
+    console.log("\naward voting");
+    const G = A.newGame({ mode: "pro", tid: 0, name: "GM" }); while (G.week <= A.PRO_WEEKS) A.simWeek(G);
+    const P = G.awards.pro, names = Object.keys(P.votes || {});
+    ok(names.length === 5, `votes: ${names.length} pro awards decided by ballot`);
+    ok(names.every(n => P.votes[n][0].pid === P.list.find(x => x.a === n).pid), "votes: the top vote-getter is the winner");
+    ok(P.list.some(x => /Offensive Rookie/.test(x.a)) && P.list.some(x => /Defensive Rookie/.test(x.a)) && P.rook.length >= 15, `votes: rookies of the year named, All-Rookie team of ${P.rook.length}`);
+    ok(G.awards.col && Object.keys(G.awards.col.votes || {}).length === 3, "votes: three college awards carry ballots");
+    const mvp = G.players[P.list[0].pid]; ok(mvp.av && mvp.av.some(r => r[1] === "Most Valuable Player" && r[2] === 1), "votes: the MVP's page records the vote");
+    // an old save: awards already announced, no ballots stored
+    const old = JSON.parse(JSON.stringify(P.list)); delete P.votes; delete P.rook; delete G.awards.col.votes; A.migrate(G);
+    ok(Object.keys(G.awards.pro.votes).length === 5 && Object.keys(G.awards.pro.votes).every(n => G.awards.pro.votes[n][0].pid === old.find(x => x.a === n).pid), "votes: back-filling an old save keeps every winner");
+    ok(G.awards.pro.rook.length >= 15 && Object.keys(G.awards.col.votes).length === 3, "votes: back-fill adds the All-Rookie team and college ballots");
+    console.log("      MVP vote: " + G.awards.pro.votes["Most Valuable Player"].slice(0, 4).map(v => `${v.n} ${v.pts} (${v.first})`).join(", "));
+    console.log("      OROY vote: " + G.awards.pro.votes["Offensive Rookie of the Year"].slice(0, 4).map(v => `${v.pos} ${v.n} ${v.pts}`).join(", "));
   },
   trades(A){
     console.log("\ntrades");

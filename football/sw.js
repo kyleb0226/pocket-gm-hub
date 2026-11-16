@@ -1,4 +1,4 @@
-const CACHE = 'football-gm-v1';
+const CACHE = 'football-gm-v2';
 // Relative paths so the same worker runs on localhost:8124 and GitHub Pages.
 const ASSETS = [
   './',

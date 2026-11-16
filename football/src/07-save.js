@@ -17,4 +17,4 @@ async function saveGame(G){
 async function loadSlot(id){ const raw = await idb("readonly", s => s.get(slotKey(id))); if (!raw) return null; const G = typeof raw === "string" ? JSON.parse(raw) : raw; return migrate(G); }
 async function deleteSlot(id){ try { await idb("readwrite", s => s.delete(slotKey(id))); } catch (e) {} localStorage.setItem(SLOTS_KEY, JSON.stringify(listSlots().filter(s => s.id !== id))); }
 // Add fields that older saves lack here, rather than changing the keys.
-function migrate(G){ G.perks = G.perks || {}; if (G.ivLeft == null) G.ivLeft = 12; G.scouted = G.scouted || {}; G.pickOwn = G.pickOwn || {}; G.dc = G.dc || {}; G.pending = G.pending || []; G.events = G.events || []; G._pbp = {}; return G; }
+function migrate(G){ G.perks = G.perks || {}; if (G.ivLeft == null) G.ivLeft = 12; G.scouted = G.scouted || {}; G.pickOwn = G.pickOwn || {}; G.dc = G.dc || {}; G.pending = G.pending || []; G.events = G.events || []; G._pbp = {}; try { backfillVotes(G); } catch (e) {} return G; }

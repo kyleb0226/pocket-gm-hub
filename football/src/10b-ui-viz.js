@@ -273,3 +273,13 @@ function TradePanel(){
     <div className="text-[11px] text-slate-500">The gold bar next to each player is his trade value. Teams pay more for a player who would start for them, and less for age. Tap “Shop” on one of your players to see what the league would give you.</div>
   </div>);
 }
+
+/* ----------------------------- award voting ----------------------------- */
+function AwardVoting({ A, voters }){
+  const names = Object.keys((A && A.votes) || {}), [k, setK] = useState(names[0]); if (!names.length) return null;
+  const cur = names.includes(k) ? k : names[0], v = A.votes[cur];
+  return <Card title="How the voting went" right={voters + " voters · 5 points for first, 3 for second, 1 for third"}>
+    <div className="flex gap-1.5 overflow-x-auto pb-2 mb-2">{names.map(n => <button key={n} onClick={() => setK(n)} className={cx("px-2.5 py-1 rounded-full text-[11px] font-semibold whitespace-nowrap border", cur === n ? "bg-acc text-slate-950 border-transparent" : "border-[#26324f] text-slate-300")}>{n.replace("Shaun Alexander ", "").replace(" of the Year", "")}</button>)}</div>
+    <div key={cur} className="page-in"><HeismanVote votes={v} w={[5, 3, 1]} />{v[0] && <div className="text-[11px] text-slate-400 mt-2">{v[0].n} took {v[0].first} of {voters} first-place votes{v[1] ? `; ${v[1].n} was the runner-up with ${v[1].first}` : ""}.</div>}</div>
+  </Card>;
+}

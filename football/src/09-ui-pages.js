@@ -93,6 +93,7 @@ function PlayerPage({ pid, onClose }){
             <tbody>{p.gl.map((r, i) => <tr key={i}><td className="l">{r.w}</td><td className="l">{r.o}</td><td className={cx("l font-semibold", r.r[0] === "W" ? "text-emerald-400" : "text-rose-400")}>{r.r}</td><td className="l text-slate-200">{lineText(r)}</td></tr>)}</tbody></table></div></Card>}
           {/* Heisman voting */}
           {p.hv && p.hv.length > 0 && <Card title="Heisman voting">{p.hv.map(([y, place, pts]) => <div key={y} className="flex items-center gap-3 mb-2"><div className="w-10 text-xs text-slate-400">{y}</div><div className={cx("disp text-xl w-12", place === 1 ? "text-amber-300" : "")}>{ord(place)}</div><div className="flex-1"><HBar v={pts} max={2700} color={place === 1 ? "#facc15" : "#64748b"} /></div><div className="text-xs tnum w-16 text-right">{pts} pts</div></div>)}</Card>}
+          {p.av && p.av.length > 0 && <Card title="Award voting">{p.av.slice().reverse().map(([y, a, place, pts], i) => <div key={i} className="flex items-center gap-3 mb-2"><div className="w-10 text-xs text-slate-400">{y}</div><div className={cx("disp text-xl w-12", place === 1 ? "text-amber-300" : "")}>{ord(place)}</div><div className="flex-1 min-w-0 text-xs truncate">{a}</div><div className="text-xs tnum w-14 text-right text-slate-400">{pts} pts</div></div>)}</Card>}
           {/* honors by year */}
           {p.aw.length > 0 && <Card title="Honors & awards">
             {Object.keys(years).sort((a, b) => b - a).map(y => { const list = years[y], wk = list.filter(a => /Player of the Week/.test(a[1])), main = list.filter(a => !/Player of the Week/.test(a[1])); return (
@@ -247,13 +248,13 @@ function BoxScore({ gid, onClose }){
 }
 
 /* ----------------------------- Heisman ceremony ----------------------------- */
-function HeismanVote({ votes, reveal = votes.length }){
+function HeismanVote({ votes, reveal = votes.length, w = [3, 2, 1] }){
   const G = useUI().G, max = votes[0].pts;
   return <div className="space-y-2">{votes.map((v, i) => { const t = T(G, v.tid) || { c1: "#475569", c2: "#fff", abbr: "—" }, shown = i >= votes.length - reveal; return (
     <div key={v.pid} className={cx("flex items-center gap-3 transition-opacity duration-500", shown ? "opacity-100" : "opacity-0")}>
       <div className={cx("disp w-7 text-right", i === 0 ? "text-amber-300 text-2xl" : "text-slate-400 text-lg")}>{i + 1}</div><Badge t={t} size={20} />
-      <div className="w-40 min-w-0"><div className="text-sm truncate"><PLink pid={v.pid} name={v.n} /></div><div className="text-[10px] text-slate-400 truncate">{v.pos} · {v.cls} · {v.line}</div></div>
-      <div className="flex-1 h-5 rounded bg-slate-800/70 overflow-hidden flex">{shown && [["first", "#facc15"], ["second", "#94a3b8"], ["third", "#b45309"]].map(([k, c]) => <div key={k} className="grow h-full" style={{ width: v[k] * (k === "first" ? 3 : k === "second" ? 2 : 1) / max * 100 + "%", background: c }} title={v[k] + " " + k + "-place votes"} />)}</div>
+      <div className="w-40 min-w-0"><div className="text-sm truncate"><PLink pid={v.pid} name={v.n} /></div><div className="text-[10px] text-slate-400 truncate">{[v.pos, v.cls, v.line].filter(Boolean).join(" · ")}</div></div>
+      <div className="flex-1 h-5 rounded bg-slate-800/70 overflow-hidden flex">{shown && [["first", "#facc15"], ["second", "#94a3b8"], ["third", "#b45309"]].map(([k, c]) => <div key={k} className="grow h-full" style={{ width: v[k] * (k === "first" ? w[0] : k === "second" ? w[1] : w[2]) / max * 100 + "%", background: c }} title={v[k] + " " + k + "-place votes"} />)}</div>
       <div className="w-14 text-right text-sm font-bold tnum">{shown ? v.pts : ""}</div>
     </div>); })}
     <div className="flex gap-3 text-[10px] text-slate-400 pt-1 pl-10"><span><i className="inline-block w-2 h-2 rounded-sm bg-amber-400 mr-1" />1st-place points</span><span><i className="inline-block w-2 h-2 rounded-sm bg-slate-400 mr-1" />2nd</span><span><i className="inline-block w-2 h-2 rounded-sm bg-amber-700 mr-1" />3rd</span></div></div>;
