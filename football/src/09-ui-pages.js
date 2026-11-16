@@ -107,6 +107,7 @@ function PlayerPage({ pid, onClose }){
             </div>
           </Card>}
         </div>
+        {sv.exact && <CompareCard p={p} />}
         {small.length > 0 && <div className="flex flex-wrap gap-1.5">{small.map((c, i) => <span key={i} className="px-2 py-0.5 rounded bg-white/5 text-[10px] text-slate-300">{c.n > 1 ? c.n + "× " : ""}{c.a}</span>)}</div>}
       </div>
     </Modal>

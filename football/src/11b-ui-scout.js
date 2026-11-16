@@ -70,7 +70,7 @@ function DraftCenter(){
   const ivBtn = p => <Btn small onClick={() => ui.openInterview(p.id)}>{G.scouted[p.id] ? "Notes" : "Interview"}</Btn>;
   const cols = [["School", p => <TeamLink t={T(G, p.tid != null ? p.tid : p.col)} />, 1], ["Rk", p => (d && d.rank && d.rank[p.id]) || "—"], ["Pro", p => <span className="text-slate-300">{seen(G, p).exact ? "" : "~"}{proProj(seen(G, p).ovr)}</span>], ["40", p => combine(p).forty]];
   return (<div>
-    <SubTabs tabs={[active || !d || !d.log.length ? "Big board" : null, live || log.length ? "Draft room" : null, active || G.phase === "reg" ? "Mock draft" : null, "Team needs", d && d.grades && G.phase === "off" ? "Grades" : null].filter(Boolean)} value={tab} onChange={setTab} />
+    <SubTabs tabs={[active || !d || !d.log.length ? "Big board" : null, live || log.length ? "Draft room" : null, active || G.phase === "reg" ? "Mock draft" : null, active || G.phase === "reg" ? "Combine" : null, "Team needs", d && d.grades && G.phase === "off" ? "Grades" : null].filter(Boolean)} value={tab} onChange={setTab} />
     {tab === "Big board" && <Card title={"Big board · " + (G.year + 1) + " draft"} right={pro ? <span><b className="text-amber-300">{G.ivLeft}</b> interviews left · ~ is an unscouted read</span> : "College ratings; “Pro” is the projected rookie rating"}>
       <PosFilter value={f} onChange={setF} /><PTable rows={pool} empty="No prospects at that position." cols={pro ? [...cols, ["", ivBtn]] : cols} /></Card>}
     {tab === "Draft room" && <div><DraftNight /><div className="grid lg:grid-cols-5 gap-3">
@@ -82,6 +82,7 @@ function DraftCenter(){
       <div className="lg:col-span-2"><Card title="Picks" pad={false}><div style={{ maxHeight: 520 }} className="overflow-y-auto">{log.length ? <table className="st tnum"><tbody>{log.slice(0, 224).map(r => { const t = T(G, r[1]), ct = r[5] != null ? T(G, r[5]) : null; return <tr key={r[0]} className={t.id === G.uid || (ct && ct.id === G.uid) ? "bg-white/5" : ""}><td className="l w-7 text-slate-500">{r[0]}</td><td className="l"><Badge t={t} size={13} /></td><td className="l"><PLink pid={r[2]} name={r[3]} /> <span className="text-slate-500">{r[4]}</span></td><td className="l text-slate-400">{ct ? ct.abbr : ""}</td></tr>; })}</tbody></table> : <Empty>No picks yet.</Empty>}</div></Card></div>
     </div></div>}
     {tab === "Mock draft" && <MockDraft />}
+    {tab === "Combine" && <CombineBoard />}
     {tab === "Team needs" && <NeedsCard />}
     {tab === "Grades" && <DraftGrades />}
   </div>);

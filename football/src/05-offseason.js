@@ -166,7 +166,7 @@ function genRecruits(G){
   G.rec.forEach((id, i) => (G.players[id].rk = i + 1));
 }
 const homeBonus = (p, t) => { const st = p.home.slice(-2); return st === t.state ? 9 : REGION[st] && REGION[st] === REGION[t.state] ? 4 : 0; };
-function schoolPull(G, p, t, noise){ return t.prestige + homeBonus(p, t) + (noise ? gauss(0, 9) : 0) + (isUser(G, t.id) ? (G.pitches[p.id] || 0) * (G.scouted[p.id] ? 11 : 9) + (G.perks.rec || 0) * 2 + nilPull(p, G.nil && G.nil.deals[p.id]) + ((G.fac || {}).recruit || 0) : 0) + prioBonus(p, t) + (t.coach.ovr - 60) * .08; }
+function schoolPull(G, p, t, noise){ return t.prestige + homeBonus(p, t) + (noise ? gauss(0, 6) : 0) + (isUser(G, t.id) ? (G.pitches[p.id] || 0) * (G.scouted[p.id] ? 13 : 10) + (G.perks.rec || 0) * 2 + nilPull(p, G.nil && G.nil.deals[p.id]) + ((G.fac || {}).recruit || 0) : 0) + prioBonus(p, t) + (t.coach.ovr - 60) * .08; }
 // The three schools most likely to land a recruit, as things stand (no luck applied).
 function recruitLeaders(G, p){
   const open = G.col.filter(t => t.id !== p.tid && rosterOf(G, t.id).filter(x => x.pos === p.pos && !x.portal).length + (G._signed && G._signed[t.id + p.pos] || 0) < COL_NEED[p.pos] + (p.portal ? 1 : 0));
@@ -178,13 +178,15 @@ function signingDay(G){
   // Transfers first: they go where they'd start.
   const best = {}; G.col.forEach(t => { const d = depthChart(G, t.id); POS.forEach(pos => (best[t.id + pos] = (d[pos].filter(p => !p.portal)[STARTERS[pos] - 1] || { ovr: 0 }).ovr)); });
   G.portal.map(id => G.players[id]).filter(Boolean).sort((a, b) => b.ovr - a.ovr).forEach(p => {
-    const from = T(G, p.tid), c = G.col.filter(t => t.id !== p.tid && cnt[t.id + p.pos] < COL_NEED[p.pos] + 1 && best[t.id + p.pos] < p.ovr + 1).map(t => [t, schoolPull(G, p, t, true) * .8 + (t.prestige > from.prestige ? 4 : 0)]).sort((a, b) => b[1] - a[1])[0];
+    const from = T(G, p.tid), mine = p.commit != null && T(G, p.commit) && p.commit !== p.tid ? T(G, p.commit) : null; delete p.commit;
+    const c = mine ? [mine] : G.col.filter(t => t.id !== p.tid && cnt[t.id + p.pos] < COL_NEED[p.pos] + 1 && best[t.id + p.pos] < p.ovr + 1).map(t => [t, schoolPull(G, p, t, true) * .8 + (t.prestige > from.prestige ? 4 : 0)]).sort((a, b) => b[1] - a[1])[0];
     delete p.portal; if (!c) return; const t = c[0];
     p.tx.push([G.year + 1, `Transferred from ${from.name} to ${t.name}`]); p.xfer = G.year + 1; moveP(G, p, t.id); cnt[t.id + p.pos]++; best[t.id + p.pos] = Math.max(best[t.id + p.pos], p.ovr); (cls[t.id] || (cls[t.id] = [])).push(p);
     if (p.ovr >= 80 || isUser(G, t.id) || isUser(G, from.id)) news(G, `PORTAL: ${p.pos} ${pname(p)} (${p.ovr}) transfers from ${from.name} to ${t.name}.`, "portal", t.id);
   });
   G.rec.map(id => G.players[id]).forEach(p => {
-    const c = G.col.filter(t => cnt[t.id + p.pos] < COL_NEED[p.pos]).map(t => [t, schoolPull(G, p, t, true)]).sort((a, b) => b[1] - a[1])[0];
+    const mine = p.commit != null && T(G, p.commit) ? T(G, p.commit) : null; delete p.commit;
+    const c = mine ? [mine] : G.col.filter(t => cnt[t.id + p.pos] < COL_NEED[p.pos]).map(t => [t, schoolPull(G, p, t, true)]).sort((a, b) => b[1] - a[1])[0];
     if (!c) return dropP(G, p); const t = c[0];
     delete p.recruit; p.enr = G.year + 1; moveP(G, p, t.id); land(p, t); p.tx.push([G.year + 1, `Signed with ${t.name} as a ${p.stars}-star recruit (No. ${p.rk} nationally)`]);
     if (p.rk <= 5 || (isUser(G, t.id) && p.stars >= 4)) news(G, `SIGNING DAY: ${p.stars}★ ${p.pos} ${pname(p)} (No. ${p.rk}) signs with ${t.name}.`, "rec", t.id);
@@ -198,7 +200,7 @@ function signingDay(G){
   if (G.mode === "college") { const i = ranks.findIndex(r => r.tid === G.uid); if (i < 10) gainLP(G, 5, "a top-10 recruiting class"); else if (i < 25) gainLP(G, 2, "a top-25 recruiting class"); news(G, `Your class ranks No. ${i + 1} nationally.`, "rec", G.uid); }
   seasonHist(G).classTop = ranks.slice(0, 10).map(r => [r.tid, r.pts, r.five]);
 }
-function pitch(G, p){ if (G.pitchLeft <= 0 || (G.pitches[p.id] || 0) >= 3) return false; G.pitches[p.id] = (G.pitches[p.id] || 0) + 1; G.pitchLeft--; return true; }
+function pitch(G, p){ if (G.pitchLeft <= 0 || (G.pitches[p.id] || 0) >= 3 || p.commit != null) return false; G.pitches[p.id] = (G.pitches[p.id] || 0) + 1; G.pitchLeft--; checkCommit(G, p); return true; }
 
 /* --- development --- */
 function progression(G){

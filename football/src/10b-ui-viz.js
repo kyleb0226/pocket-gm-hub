@@ -259,6 +259,7 @@ function TradePanel(){
   const offers = useMemo(() => shop ? shopPlayer(G, shop) : [], [shop && shop.id, (G.trades || []).length]);
   const names = xs => xs.map(a => a.p ? `${a.p.pos} ${pname(a.p)} (${a.p.ovr}, age ${a.p.age})` : a.label).join(", ") || "—";
   return (<div className="space-y-3">
+    <IncomingOffers />
     {!open && <div className="card p-3 text-sm text-amber-200 bg-amber-400/5">{G.phase === "reg" ? `The trade deadline (week ${TRADE_DEADLINE}) has passed. Trading reopens in the offseason.` : "Trading reopens when the new season starts."}</div>}
     {open && <div className="card p-3">
       <div className="flex items-center gap-3 flex-wrap"><div className="text-sm">Trade with</div><Sel value={tid} onChange={v => { setTid(v == null ? others[0].id : v); setGet([]); }}>{others.map(x => <option key={x.id} value={x.id}>{tname(x)} ({x.w}–{x.l})</option>)}</Sel><div className="text-[11px] text-slate-400 ml-auto">{G.phase === "reg" ? `Deadline: week ${TRADE_DEADLINE}` : "Open until the draft ends"}</div></div>

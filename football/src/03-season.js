@@ -121,7 +121,9 @@ function gameTeams(G, g){
 function playGame(G, g, pre){
   const [H, A] = gameTeams(G, g), user = isUser(G, g.h) || isUser(G, g.a);
   const big = !H.pro && A.rank > 0 && H.rank > 0;
-  const r = pre || simGame(G, H, A, gameOpts(G, g, { pbp: user })); if (weatherFor(G, g)) g.wx = weatherFor(G, g);
+  let r = pre; if (!r && g._seed) { const keep = _rng; _rng = mulberry32(g._seed); try { r = simGame(G, H, A, gameOpts(G, g, { pbp: true, user: isUser(G, g.h) ? 0 : 1, calls: (g._calls || []).slice() })); } finally { _rng = keep; } }
+  delete g._seed; delete g._calls;
+  if (!r) r = simGame(G, H, A, gameOpts(G, g, { pbp: user })); if (weatherFor(G, g)) g.wx = weatherFor(G, g);
   applyGame(G, g, r, { post: !!g.post, keepBox: user || big || !!g.post });
   if (g.riv != null) {
     const rv = G.riv.find(x => x.i === g.riv), win = g.hs > g.as ? g.h : g.a;

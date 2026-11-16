@@ -8,7 +8,7 @@
 const fs = require("fs"), path = require("path"), vm = require("vm");
 const ROOT = path.join(__dirname, "..");
 require("child_process").execFileSync("node", [path.join(__dirname, "assemble.js")], { stdio: "inherit" });
-const EXPORTS = ["newGame","simWeek","advanceOff","T","rosterOf","colPlayers","proPlayers","CONF_ORDER","CONFS","COL_NEED","PRO_NEED","POS","gameById","winnerOf","confStandings","draftRun","payroll","CAP","EV","chooseEvent","spawnEvent","buy","SHOP","LAST_WEEK","userGame","stripForSave","freeAgents","pitch","seen","teamPicks","evalTrade","doTrade","shopPlayer","aiTrades","playerVal","depthChart","tradeOpen","userTeam","migrate","PRO_WEEKS","coachGame","finishCoached","whatIf","greatestTeams","takeJob","nilOffer","retainPlayer","hireStaff","buyFac","toggleRedshirt","combineBoard","deadlineOffers","acceptOffer","weatherFor","matchupEdges","jobReview","moveConf","chooseEvent","planOf"];
+const EXPORTS = ["newGame","simWeek","advanceOff","T","rosterOf","colPlayers","proPlayers","CONF_ORDER","CONFS","COL_NEED","PRO_NEED","POS","gameById","winnerOf","confStandings","draftRun","payroll","CAP","EV","chooseEvent","spawnEvent","buy","SHOP","LAST_WEEK","userGame","stripForSave","freeAgents","pitch","seen","teamPicks","evalTrade","doTrade","shopPlayer","aiTrades","playerVal","depthChart","tradeOpen","userTeam","migrate","PRO_WEEKS","coachGame","finishCoached","whatIf","greatestTeams","takeJob","nilOffer","retainPlayer","hireStaff","buyFac","toggleRedshirt","combineBoard","deadlineOffers","acceptOffer","weatherFor","matchupEdges","jobReview","moveConf","chooseEvent","planOf","checkCommit","nilToLead","recruitLeaders","userTeam"];
 function load(){
   const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
   const m = html.match(/<script type="text\/babel-src" id="app-src">([\s\S]*?)<\/script>/);
@@ -124,6 +124,36 @@ const CHECKS = {
     ok(fixed.rkFix && o2.draft && o2.draft.y === G.year && !kicker.aw.some(a => a[0] === G.year && /Offensive Rookie/.test(a[1])), "rookies: the one-time re-vote fixes an old save");
     ok(fixed.rook.length >= 18 && fixed.list.filter(x => /Rookie of the Year/.test(x.a)).length === 2, "rookies: re-vote leaves exactly two rookie awards and a full All-Rookie team");
     const before = JSON.stringify(fixed.list); A.migrate(G); ok(JSON.stringify(G.awards.pro.list) === before, "rookies: the re-vote only ever runs once");
+  },
+  dynasty(A){
+    console.log("\ngame day and dynasty");
+    const G = A.newGame({ mode: "college", seed: 5 }); while (!A.userGame(G, G.week)) A.simWeek(G);
+    const ug = A.userGame(G, G.week); let calls = [], res = A.coachGame(G, ug, calls), asked = 0;
+    while (res.need && asked < 12) { asked++; calls.push(res.need.type === "4th" ? (res.need.canFG ? "fg" : "go") : "two"); res = A.coachGame(G, ug, calls); }
+    ok(res.r && res.r.sc[0] !== res.r.sc[1], `live calls: the game finishes after ${asked} user decision${asked === 1 ? "" : "s"}`);
+    const again = A.coachGame(G, ug, calls); ok(again.r && again.r.sc[0] === res.r.sc[0] && again.r.sc[1] === res.r.sc[1], "live calls: replaying the same answers gives the same game");
+    { const G2 = A.newGame({ mode: "college", seed: 5 }); while (!A.userGame(G2, G2.week)) A.simWeek(G2); const g2 = A.userGame(G2, G2.week); g2._seed = ug._seed; g2._calls = calls.slice(); A.simWeek(G2); ok(g2.done && g2.hs === res.r.sc[0] && g2.as === res.r.sc[1], "live calls: advancing without booking it still plays the game you coached"); }
+    A.finishCoached(G, ug, res.r); ok(ug.done && ug.hs === res.r.sc[0], "live calls: the coached game is in the books"); const w0 = G.week; A.simWeek(G); ok(G.week === w0 + 1 && A.T(G, G.uid).w + A.T(G, G.uid).l >= 1, "live calls: the rest of the week sims around it");
+    ok(G.staff && G.staff.oc && G.staff.dc && G.staff.rc && G.staffPool.oc.length === 4, "staff: coordinators and a hiring pool exist"); const best = G.staffPool.oc[0].name; A.hireStaff(G, "oc", 0); ok(G.staff.oc.name === best && !A.hireStaff(G, "oc", 0), "staff: one hire per role per year");
+    const fr = A.rosterOf(G, G.uid).find(p => p.cls === 0 && !(p.st.g > 0)) || A.rosterOf(G, G.uid).find(p => p.cls === 0); const cls0 = fr.cls; A.toggleRedshirt(G, fr); ok(fr.rs === G.year && !A.depthChart(G, G.uid)[fr.pos].includes(fr), "redshirt: he sits out");
+    G.lp = 20; ok(A.buyFac(G, "train") && G.fac.train === 1 && G.lp === 17, "facilities: an upgrade costs Legacy Points");
+    const wxs = G.cs.map(x => A.weatherFor(G, x)), bad = wxs.filter(Boolean).length / wxs.length; ok(bad > .08 && bad < .4, `weather: ${Math.round(bad * 100)}% of games have weather`);
+    let err = null; try { while (G.phase === "reg") A.simWeek(G); } catch (e) { err = e; } ok(!err, "dynasty: season finishes", err && err.stack);
+    ok(G.nil && G.nil.budget > 1000 && G.coach.sec != null, `NIL budget $${G.nil && G.nil.budget}K, job security ${G.coach.sec}`);
+    const rec = G.players[G.rec[0]], left = G.nil.left; ok(A.nilOffer(G, rec, 300) && G.nil.left === left - 300, "NIL: an offer spends the budget");
+    { const ut = A.T(G, G.uid), tgt = G.rec.map(id => G.players[id]).filter(p => A.nilToLead(G, p) > 0 && A.nilToLead(G, p) <= G.nil.left).slice(0, 3); let got = 0; tgt.forEach(p => { A.nilOffer(G, p, A.nilToLead(G, p)); if (p.commit === G.uid) got++; }); ok(tgt.length > 0 && got === tgt.length, `recruiting: paying the Lock price commits the player (${got}/${tgt.length})`); G._commits = tgt.map(p => p.id); }
+    const wi = A.whatIf(G, 20); ok(wi && wi.rows.length >= 11 && wi.dist.reduce((a, b) => a + b, 0) === 20, `what-if: ${wi.rows.length} games replayed, expected wins ${wi.exp.toFixed(1)} vs actual ${wi.actual}`);
+    ok(A.greatestTeams(G, false, 10).length === 10 && A.combineBoard(G).forty.length === 8, "greatest teams and combine boards fill in");
+    try { let k = 0; while (G.phase === "off" && k++ < 10) A.advanceOff(G); } catch (e) { err = e; } ok(!err && G.year === 2027, "dynasty: offseason finishes", err && err.stack);
+    ok(G._commits.every(id => G.players[id] && G.players[id].tid === G.uid), "recruiting: every committed recruit signs with you");
+    ok(fr.cls === cls0 && fr.rsd === 1, "redshirt: he keeps his year of eligibility");
+    const nt = A.takeJob(G, G.pro[3].id); ok(G.mode === "pro" && G.uid === nt.id && G.staff.sc && !G.staff.rc, "jobs: a college coach can take a pro job");
+    try { for (let k = 0; k < 8; k++) A.simWeek(G); } catch (e) { err = e; } ok(!err, "jobs: the pro season runs after the move", err && err.stack);
+    const of = (G.offers || [])[0]; if (of) { const p = G.players[of.pid]; ok(A.acceptOffer(G, of.id) && p.tid === of.tid, "deadline: an incoming offer can be accepted"); } else ok(true, "deadline: no offers came in this run");
+    try { while (G.phase === "reg") A.simWeek(G); } catch (e) { err = e; } ok(!err, "dynasty: the pro season completes", err && err.stack);
+    const asg = G.awards.pro && G.awards.pro.asg; ok(asg && asg.mvp && asg.sc[0] !== asg.sc[1], "all-star game is played with an MVP");
+    try { let k = 0; while (G.phase === "off" && k++ < 10) A.advanceOff(G); } catch (e) { err = e; } ok(!err, "dynasty: second offseason completes", err && err.stack);
+    const t = A.T(G, 100), from = t.conf, to = from === "SEC" ? "ACC" : "SEC"; A.moveConf(G, t, to); try { while (G.phase === "reg") A.simWeek(G); } catch (e) { err = e; } ok(!err && t.conf === to && t.cw + t.cl > 0, "realignment: a moved school plays its new conference", err && err.stack);
   },
   trades(A){
     console.log("\ntrades");

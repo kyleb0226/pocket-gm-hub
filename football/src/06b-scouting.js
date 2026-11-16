@@ -18,7 +18,7 @@ function recruitInterest(G, p){
   return clamp(round(60 + (mine - top) * 2.2), 3, 99);
 }
 // One sit-down: full ratings, his make-up, what he wants. Limited per year.
-function interview(G, p){ if (G.scouted[p.id]) return true; if ((G.ivLeft || 0) <= 0) return false; G.ivLeft--; G.scouted[p.id] = 1; return true; }
+function interview(G, p){ if (G.scouted[p.id]) return true; if ((G.ivLeft || 0) <= 0) return false; G.ivLeft--; G.scouted[p.id] = 1; if (typeof checkCommit === "function") checkCommit(G, p); return true; }
 function combine(p){
   const g = GROUP(p.pos), q = p.ovr - 70, n = k => hsh(p.id, k) - .5;
   const f0 = { QB: 4.82, RB: 4.52, WR: 4.48, TE: 4.72, OT: 5.2, OG: 5.26, C: 5.22, DE: 4.8, DT: 5.06, LB: 4.66, CB: 4.46, S: 4.53, K: 4.95, P: 4.95 }[p.pos];

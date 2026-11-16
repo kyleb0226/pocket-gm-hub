@@ -39,7 +39,7 @@ function coachGame(G, g, calls){
   try { const r = simGame(G, H, A, gameOpts(G, g, { pbp: true, user: isUser(G, g.h) ? 0 : 1, calls: (calls || []).slice(), ask: true })); _rng = keep; return { r }; }
   catch (e) { _rng = keep; if (e && e._need) return { need: e._need }; throw e; }
 }
-function finishCoached(G, g, r){ const keep = G._wk; G._wk = []; playGame(G, g, r); G._wkPre = G._wk; G._wk = keep; delete g._seed; }
+function finishCoached(G, g, r){ if (g.done) return; const keep = G._wk; G._wk = []; playGame(G, g, r); G._wkPre = G._wk; G._wk = keep; }
 
 /* ----------------------------- coaching staff ----------------------------- */
 const STAFF_ROLES = G => [["oc", "Offensive coordinator"], ["dc", "Defensive coordinator"], G.mode === "pro" ? ["sc", "Scouting director"] : ["rc", "Recruiting coordinator"]];
@@ -68,8 +68,18 @@ function staffOffseason(G){
 
 /* ----------------------------- NIL (college) ----------------------------- */
 function nilReset(G){ const t = userTeam(G); if (t.pro) { G.nil = null; return; } const b = round(700 + t.prestige * 42 + ((t.hist[t.hist.length - 1] || { w: 6 }).w) * 70 + ((G.fac || {}).recruit || 0) * 250); G.nil = { budget: b, left: b, deals: {} }; }
-const nilPull = (p, amt) => amt ? 5 * Math.log2(1 + amt / 100) / (1 + Math.max(0, (p.stars || 3) - 3) * .25) : 0;
-function nilOffer(G, p, amt){ const n = G.nil; if (!n || n.left < amt) return false; n.left -= amt; n.deals[p.id] = (n.deals[p.id] || 0) + amt; return true; }
+const nilPull = (p, amt) => amt ? 6.5 * Math.log2(1 + amt / 100) / (1 + Math.max(0, (p.stars || 3) - 3) * .2) : 0;
+// Once you clearly lead for a recruit he commits, and a commitment holds: no more money or pitches needed.
+function checkCommit(G, p){
+  if (!p || p.commit != null || !(p.recruit || p.portal) || p.tid === G.uid) return false; const ut = userTeam(G); if (ut.pro) return false;
+  if (rosterOf(G, ut.id).filter(x => x.pos === p.pos && !x.portal).length + Object.values(G.players).filter(x => x.commit === ut.id && x.pos === p.pos).length >= COL_NEED[p.pos] + 2) return false;
+  const lead = recruitLeaders(G, p).filter(([t]) => t.id !== ut.id)[0], mine = schoolPull(G, p, ut, false);
+  if (lead && mine < lead[1] + 4) return false;
+  p.commit = ut.id; news(G, `COMMITTED: ${p.stars ? p.stars + "★ " : ""}${p.pos} ${pname(p)} gives ${ut.name} his word.`, "rec", ut.id); return true;
+}
+// How far behind the leader you are for a recruit, in NIL dollars ($K), or 0 if you already lead.
+function nilToLead(G, p){ const ut = userTeam(G), lead = recruitLeaders(G, p).filter(([t]) => t.id !== ut.id)[0]; if (!lead) return 0; const gap = lead[1] + 4 - schoolPull(G, p, ut, false); if (gap <= 0) return 0; const cur = (G.nil && G.nil.deals[p.id]) || 0, k = 6.5 / (1 + Math.max(0, (p.stars || 3) - 3) * .2), need = 100 * (Math.pow(2, (nilPull(p, cur) + gap) / k) - 1) - cur; return Math.ceil(need / 50) * 50; }
+function nilOffer(G, p, amt){ const n = G.nil; if (!n || n.left < amt || p.commit != null) return false; n.left -= amt; n.deals[p.id] = (n.deals[p.id] || 0) + amt; checkCommit(G, p); return true; }
 const retainCost = p => round((Math.max(0, p.ovr - 60) * 28 + 120) / 10) * 10;
 function retainPlayer(G, p){ const c = retainCost(p), n = G.nil; if (!n || n.left < c || !p.portal) return false; n.left -= c; delete p.portal; p.stay = 1; G.portal = (G.portal || []).filter(id => id !== p.id); p.tx.push([G.year, `Pulled his name from the portal to stay at ${T(G, p.tid).name}`]); news(G, `${p.pos} ${pname(p)} withdraws from the portal and stays.`, "portal", p.tid); return true; }
 
