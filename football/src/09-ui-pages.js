@@ -75,7 +75,7 @@ function PlayerPage({ pid, onClose }){
           </Card>
           <Card title="Career arc" right="rating by age · ★ = major award">
             <CareerArc p={p} color={brightOf(tc)} />
-            <div className="grid grid-cols-2 gap-2 mt-2 text-xs"><div className="bg-white/5 rounded-lg p-2"><div className="text-slate-400 text-[10px]">Character</div><div className="font-bold">{p.chr >= 80 ? "Leader" : p.chr >= 60 ? "Solid" : p.chr >= 40 ? "Average" : "Question marks"}</div></div><div className="bg-white/5 rounded-lg p-2"><div className="text-slate-400 text-[10px]">{pro ? "Experience" : "Enrolled"}</div><div className="font-bold">{pro ? (p.exp ? p.exp + " yr" : "Rookie") : p.enr || "—"}</div></div></div>
+            <div className="grid grid-cols-2 gap-2 mt-2 text-xs"><div className="bg-white/5 rounded-lg p-2"><div className="text-slate-400 text-[10px]">Character</div><div className="font-bold">{p.chr >= 80 ? "Leader" : p.chr >= 60 ? "Solid" : p.chr >= 40 ? "Average" : "Question marks"}</div></div><div className="bg-white/5 rounded-lg p-2"><div className="text-slate-400 text-[10px]">{pro ? "Experience" : "Enrolled"}</div><div className="font-bold">{pro ? (isRookie(G, p) ? "Rookie" : (p.exp || 1) + " yr") : p.enr || "—"}</div></div></div>
           </Card>
         </div>
 

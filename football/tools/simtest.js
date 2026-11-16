@@ -8,7 +8,7 @@
 const fs = require("fs"), path = require("path"), vm = require("vm");
 const ROOT = path.join(__dirname, "..");
 require("child_process").execFileSync("node", [path.join(__dirname, "assemble.js")], { stdio: "inherit" });
-const EXPORTS = ["newGame","simWeek","advanceOff","T","rosterOf","colPlayers","proPlayers","CONF_ORDER","CONFS","COL_NEED","PRO_NEED","POS","gameById","winnerOf","confStandings","draftRun","payroll","CAP","EV","chooseEvent","spawnEvent","buy","SHOP","LAST_WEEK","userGame","stripForSave","freeAgents","pitch","seen","teamPicks","evalTrade","doTrade","shopPlayer","aiTrades","playerVal","depthChart","tradeOpen","userTeam","migrate","PRO_WEEKS"];
+const EXPORTS = ["newGame","simWeek","advanceOff","T","rosterOf","colPlayers","proPlayers","CONF_ORDER","CONFS","COL_NEED","PRO_NEED","POS","gameById","winnerOf","confStandings","draftRun","payroll","CAP","EV","chooseEvent","spawnEvent","buy","SHOP","LAST_WEEK","userGame","stripForSave","freeAgents","pitch","seen","teamPicks","evalTrade","doTrade","shopPlayer","aiTrades","playerVal","depthChart","tradeOpen","userTeam","migrate","PRO_WEEKS","coachGame","finishCoached","whatIf","greatestTeams","takeJob","nilOffer","retainPlayer","hireStaff","buyFac","toggleRedshirt","combineBoard","deadlineOffers","acceptOffer","weatherFor","matchupEdges","jobReview","moveConf","chooseEvent","planOf"];
 function load(){
   const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
   const m = html.match(/<script type="text\/babel-src" id="app-src">([\s\S]*?)<\/script>/);
@@ -109,6 +109,21 @@ const CHECKS = {
     ok(G.awards.pro.rook.length >= 15 && Object.keys(G.awards.col.votes).length === 3, "votes: back-fill adds the All-Rookie team and college ballots");
     console.log("      MVP vote: " + G.awards.pro.votes["Most Valuable Player"].slice(0, 4).map(v => `${v.n} ${v.pts} (${v.first})`).join(", "));
     console.log("      OROY vote: " + G.awards.pro.votes["Offensive Rookie of the Year"].slice(0, 4).map(v => `${v.pos} ${v.n} ${v.pts}`).join(", "));
+  },
+  rookies(A){
+    console.log("\nrookies in year two");
+    const G = A.newGame({ mode: "pro", tid: 0, name: "GM" }); while (G.phase === "reg") A.simWeek(G); let g = 0; while (G.phase === "off" && g++ < 10) A.advanceOff(G);
+    while (G.week <= A.PRO_WEEKS) A.simWeek(G);
+    const P = G.awards.pro, oroy = G.players[P.list.find(x => /Offensive Rookie/.test(x.a)).pid], droy = G.players[P.list.find(x => /Defensive Rookie/.test(x.a)).pid];
+    ok(oroy.draft && oroy.draft.y === G.year && droy.draft && droy.draft.y === G.year, `rookies: both winners were drafted this year (${oroy.pos} pick ${oroy.draft.pk}, ${droy.pos} pick ${droy.draft.pk})`);
+    ok(P.rook.length >= 18 && P.rook.filter(r => G.players[r.pid].draft).length >= 15, `rookies: All-Rookie team has ${P.rook.length} players, not just a kicker`);
+    // a save that handed these out under the old rule
+    const kicker = A.proPlayers(G).find(p => p.pos === "K"); delete P.rkFix; P.rook = [{ pid: kicker.id }]; P.list.find(x => /Offensive Rookie/.test(x.a)).pid = kicker.id; kicker.aw.push([G.year, "Offensive Rookie of the Year"]);
+    A.migrate(G);
+    const fixed = G.awards.pro, o2 = G.players[fixed.list.find(x => /Offensive Rookie/.test(x.a)).pid];
+    ok(fixed.rkFix && o2.draft && o2.draft.y === G.year && !kicker.aw.some(a => a[0] === G.year && /Offensive Rookie/.test(a[1])), "rookies: the one-time re-vote fixes an old save");
+    ok(fixed.rook.length >= 18 && fixed.list.filter(x => /Rookie of the Year/.test(x.a)).length === 2, "rookies: re-vote leaves exactly two rookie awards and a full All-Rookie team");
+    const before = JSON.stringify(fixed.list); A.migrate(G); ok(JSON.stringify(G.awards.pro.list) === before, "rookies: the re-vote only ever runs once");
   },
   trades(A){
     console.log("\ntrades");

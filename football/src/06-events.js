@@ -167,7 +167,7 @@ const EV = {
     title: () => "Contract year", body: (G, c) => `${pname(P_(G, c))} is in the last year of his deal and his agent is going public. He wants an extension before he takes another snap.`,
     opts: [{ l: "Extend him now", d: "+3 years at a 12% raise", fx: (G, c) => { const p = P_(G, c); p.c = { amt: +(askOf(G, p) * 1.12).toFixed(2), yrs: 4 }; moraleUp(G, .8); story(G, p, "Signed a contract extension after a public standoff."); p.tx.push([G.year, `Signed an extension with the ${userTeam(G).nick}`]); return `Done: 4 years, ${money(p.c.amt)} per.`; } },
       { l: "Hold firm until the offseason", d: "He might sit", fx: (G, c) => { const p = P_(G, c); if (chance(.4)) { p.inj = 2; story(G, p, "Sat out two games in a contract dispute."); return "He 'tweaks a hamstring.' Two weeks."; } bump(G, p, 1); story(G, p, "Played through a contract dispute with a chip on his shoulder."); return "He plays angry. It's working (+1)."; } }] },
-  rookiewall: { mode: "pro", when: G => { const p = someStarter(G, p => p.exp === 0); return p && G.week >= 9 ? { pid: p.id } : null; },
+  rookiewall: { mode: "pro", when: G => { const p = someStarter(G, p => isRookie(G, p)); return p && G.week >= 9 ? { pid: p.id } : null; },
     title: () => "The rookie wall", body: (G, c) => `${pname(P_(G, c))} has never played this many games in a season. The tape shows tired legs.`,
     opts: [{ l: "Cut his practice reps", d: "He finishes strong", fx: (G, c) => { bump(G, P_(G, c), 1); story(G, P_(G, c), "Pushed through the rookie wall."); return "Fresh legs in December (+1)."; } },
       { l: "Pair him with a veteran for the stretch run", d: "+potential", fx: (G, c) => { P_(G, c).pot = clamp(P_(G, c).pot + 2, P_(G, c).ovr, 99); return "He learns how pros take care of their bodies (+2 potential)."; } }] },
@@ -195,8 +195,11 @@ function chooseEvent(G, id, i){
   const ev = G.events.find(e => e.id === id); if (!ev || ev.done) return;
   if (ev.key === "job") {
     const jobs = ev.ctx.jobs;
-    if (i < jobs.length) { const old = userTeam(G), nt = T(G, jobs[i]); old.coach = makeCoach(G, 34 + old.prestige * .5); old.coach.since = G.year + 1; G.uid = nt.id; nt.coach = { name: G.coach.name, age: 45, ovr: 70, w: 0, l: 0, ch: 0, aw: [], since: G.year + 1 }; G.pitches = {}; ev.result = `You're the new head coach at ${nt.name}.`; news(G, `${G.coach.name} leaves ${old.name} to take over at ${nt.name}.`, "coach", nt.id); }
-    else { gainLP(G, 4, "loyalty"); ev.result = "You're staying. The administration announces a contract extension."; }
+    if (i < jobs.length) { const nt = takeJob(G, jobs[i]); ev.result = nt.pro ? `You're the new general manager of the ${nt.city} ${nt.nick}.` : `You're the new head coach at ${nt.name}.`; }
+    else { gainLP(G, 4, "loyalty"); G.coach.sec = clamp((G.coach.sec || 60) + 8, 0, 100); ev.result = "You're staying. The administration announces a contract extension."; }
+    delete G.coach.fired;
+  } else if (ev.key === "realign") {
+    const t = userTeam(G); if (i === 0) { moveConf(G, t, ev.ctx.to); t.prestige = clamp(t.prestige + 2, 0, 99); ev.result = `${t.name} joins the ${G.confs[ev.ctx.to].name} next season.`; } else ev.result = "You're staying where you are.";
   } else ev.result = EV[ev.key].opts[i].fx(G, ev.ctx);
   ev.done = true; ev.pick = i;
 }

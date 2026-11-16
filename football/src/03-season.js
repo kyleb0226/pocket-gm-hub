@@ -76,7 +76,7 @@ function buildProSchedule(G){
 
 /* ----------------------------- season start ----------------------------- */
 function startSeason(G){
-  G.gid = G.gid || 0; G.ivLeft = 12; G.week = 1; G.phase = "reg"; G.offStep = 0;
+  G.gid = G.gid || 0; ensureStaff(G); G.ivLeft = 12 + (G.mode === "pro" ? staffBonus(G, "sc") + ((G.fac || {}).recruit || 0) : 0); G.offers = []; G.week = 1; G.phase = "reg"; G.offStep = 0;
   [...G.col, ...G.pro].forEach(t => { Object.assign(t, { w: 0, l: 0, cw: 0, cl: 0, dw: 0, dl: 0, pf: 0, pa: 0, res: [], streak: 0, rank: 0, rkHist: [], morale: 0 }); });
   for (const id in G.players) { const p = G.players[id]; p.st = {}; delete p.gl; if (p.inj) delete p.inj; }
   Object.values(G.confs).forEach(c => delete c.champ);
@@ -118,10 +118,10 @@ function gameTeams(G, g){
   const H = T(G, g.h), A = g.a < 0 ? { fcs: true, id: -1, name: g.fcs, abbr: "FCS", rating: 40 + (g.id % 15), c1: "#64748b", c2: "#e2e8f0" } : T(G, g.a);
   return [H, A];
 }
-function playGame(G, g){
+function playGame(G, g, pre){
   const [H, A] = gameTeams(G, g), user = isUser(G, g.h) || isUser(G, g.a);
   const big = !H.pro && A.rank > 0 && H.rank > 0;
-  const r = simGame(G, H, A, { neutral: g.neutral, pbp: user });
+  const r = pre || simGame(G, H, A, gameOpts(G, g, { pbp: user })); if (weatherFor(G, g)) g.wx = weatherFor(G, g);
   applyGame(G, g, r, { post: !!g.post, keepBox: user || big || !!g.post });
   if (g.riv != null) {
     const rv = G.riv.find(x => x.i === g.riv), win = g.hs > g.as ? g.h : g.a;
@@ -140,13 +140,14 @@ const userGame = (G, w) => [...G.cs, ...G.ps].find(g => g.w === w && (g.h === G.
 /* ----------------------------- advancing the calendar ----------------------------- */
 function simWeek(G){
   if (G.phase !== "reg") return;
-  const w = G.week; G._wk = [];
+  const w = G.week; G._wk = G._wkPre || []; G._wkPre = null;
   expireEvents(G);
   G.cs.filter(g => g.w === w && !g.done).forEach(g => playGame(G, g));
   G.ps.filter(g => g.w === w && !g.done).forEach(g => playGame(G, g));
   for (const id in G.players) { const p = G.players[id]; if (p.inj) { p.st.gm = (p.st.gm || 0) + 1; if (--p.inj <= 0) delete p.inj; } }
   resolvePicks(G, w);
-  if (w === TRADE_DEADLINE) { aiTrades(G, 4); news(G, "The pro trade deadline has passed. Rosters are set until the offseason.", "pro"); }
+  if (G.mode === "pro" && w >= 4 && w < TRADE_DEADLINE) deadlineOffers(G);
+  if (w === TRADE_DEADLINE) { G.offers = []; aiTrades(G, 4); news(G, "The pro trade deadline has passed. Rosters are set until the offseason.", "pro"); }
   // College side of the calendar.
   if (w <= COL_WEEKS) { rankCollege(G); weeklyHonors(G, w); heismanWatch(G); }
   if (w === COL_WEEKS) setupConfTitles(G);

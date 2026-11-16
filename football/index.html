@@ -326,7 +326,7 @@ function newGame(o = {}){
 // Everything the sim needs to know about one side, built fresh for each game.
 function depthChart(G, tid){
   const d = {}; POS.forEach(k => (d[k] = []));
-  rosterOf(G, tid).forEach(p => d[p.pos].push(p));
+  rosterOf(G, tid).forEach(p => { if (p.rs !== G.year || G.phase === "off") d[p.pos].push(p); });
   POS.forEach(k => d[k].sort((a, b) => (a.inj ? 1 : 0) - (b.inj ? 1 : 0) || b.ovr - a.ovr));
   if (G.dc && tid === G.uid) POS.forEach(k => { const o = G.dc[k]; if (!o) return; const r = p => { const i = o.indexOf(p.id); return i < 0 ? 99 : i; }; d[k].sort((a, b) => (a.inj ? 1 : 0) - (b.inj ? 1 : 0) || r(a) - r(b) || b.ovr - a.ovr); });
   return d;
@@ -336,14 +336,15 @@ function lineup(G, t, edge){
   const d = depthChart(G, t.id), ok = (pos, n) => d[pos].filter(p => !p.inj).slice(0, n);
   const ol = [...ok("OT", 2), ...ok("OG", 2), ...ok("C", 1)], dl = [...ok("DE", 2), ...ok("DT", 2)], lb = ok("LB", 3), cb = ok("CB", 3), s = ok("S", 2);
   const qb = ok("QB", 1)[0], rbs = ok("RB", 2), wrs = ok("WR", 4), te = ok("TE", 1)[0];
-  const m = (t.morale || 0) * .5 + (t.coach ? (t.coach.ovr - 60) * .05 : 0) + (edge || 0) + (isUser(G, t.id) ? (G.perks.gp || 0) * .5 : 0);
+  const me = isUser(G, t.id), sf = me && G.staff ? G.staff : null, m0 = (t.morale || 0) * .5 + (t.coach ? (t.coach.ovr - 60) * .05 : 0) + (edge || 0) + (me ? (G.perks.gp || 0) * .5 + (edge ? ((G.fac || {}).stad || 0) * .2 : 0) : 0);
+  const m = m0 + (sf && sf.oc ? (sf.oc.ovr - 70) * .05 : 0), md = m0 + (sf && sf.dc ? (sf.dc.ovr - 70) * .05 : 0);
   const recv = avgOf([...wrs.slice(0, 3), te].filter(Boolean), p => p.ovr), pblk = avgOf(ol, p => p.r[0]), rblk = avgOf(ol, p => p.r[1]);
   const rush = (avgOf(dl, p => p.r[0]) * 4 + avgOf(lb, p => p.r[2])) / 5, cover = (avgOf(cb, p => p.ovr) * 3 + avgOf(s, p => p.ovr) * 2 + avgOf(lb, p => p.r[1])) / 6;
   const w3 = p => Math.pow(p.ovr / 70, 2);
   const c = {
     t, qb, k: ok("K", 1)[0], p: ok("P", 1)[0], ol,
     passOff: .42 * (qb ? qb.ovr : 45) + .3 * recv + .28 * pblk + m, runOff: .5 * avgOf(rbs.slice(0, 1), p => p.ovr) + .5 * rblk + m,
-    passDef: .62 * cover + .38 * rush + m, runDef: .55 * avgOf(dl, p => p.r[1]) + .45 * avgOf(lb, p => p.r[0]) + m, rush: rush + m, cover: cover + m, pblk: pblk + m,
+    passDef: .62 * cover + .38 * rush + md, runDef: .55 * avgOf(dl, p => p.r[1]) + .45 * avgOf(lb, p => p.r[0]) + md, rush: rush + md, cover: cover + md, pblk: pblk + m,
     targets: [...wrs.map((p, i) => [p, [26, 21, 15, 5][i] * w3(p)]), ...(te ? [[te, 17 * w3(te)]] : []), ...rbs.map((p, i) => [p, [11, 5][i] * w3(p)])],
     backs: rbs.map((p, i) => [p, [60, 40][i] * w3(p)]),
     rushers: [...dl.map(p => [p, (p.pos === "DE" ? 3 : 1.6) * Math.pow(p.r[0] / 70, 4)]), ...lb.map(p => [p, Math.pow(p.r[2] / 70, 4)])],
@@ -365,46 +366,51 @@ function simGame(G, H, A, o = {}){
   const L = {}, add = (p, k, v = 1) => { if (!p) return; const l = L[p.id] || (L[p.id] = {}); l[k] = (l[k] || 0) + v; };
   const sc = [0, 0], q = [[0, 0, 0, 0, 0], [0, 0, 0, 0, 0]], smry = [], flow = [[0, 0]], pbp = o.pbp ? [] : null;
   const tot = [{ pl: 0, yd: 0, py: 0, ry: 0, to: 0, fd: 0 }, { pl: 0, yd: 0, py: 0, ry: 0, to: 0, fd: 0 }];
-  let clock = 0, ot = 0;
+  let clock = 0, ot = 0, asked = 0;
+  const PL = o.plan || [{}, {}], wx = o.wx || "", WX = { rain: [.03, .03, 1.6, .03], wind: [.02, .08, 1, .04], snow: [.045, .05, 1.5, .06] }[wx] || [0, 0, 1, 0], crowd = o.neutral ? 0 : (o.crowd || 0), calls = o.calls || [];
+  // A decision only the user can make: answer from the list, or stop the sim and ask.
+  const ask = info => { if (calls.length) return calls.shift(); if (o.ask && asked < 6) { asked++; throw { _need: Object.assign(info, { sc: sc.slice(), clock, last: pbp ? pbp.slice(-4).map(x => x[3]) : [] }) }; } return null; };
   const nm = p => p ? p.fn[0] + ". " + p.ln : "Team";
   const score = (i, pts, txt) => { sc[i] += pts; q[i][Math.min(4, Math.floor(clock / 900))] += pts; smry.push([Math.min(5, Math.floor(clock / 900) + 1), i, txt, sc[0], sc[1]]); flow.push([Math.min(clock, 3600 + ot * 60), sc[0] - sc[1]]); };
   const log = (i, y, txt, kind) => { if (pbp) pbp.push([clock, i, clamp(round(y), 0, 100), txt, sc[0], sc[1], kind || ""]); };
-  const xp = (i, O) => { add(O.k, "xpa"); if (chance(clamp(.95 + ((O.k ? O.k.r[1] : 60) - 70) * .002, .85, .995))) { add(O.k, "xpm"); sc[i]++; q[i][Math.min(4, Math.floor(clock / 900))]++; const s = smry[smry.length - 1]; s[3] = sc[0]; s[4] = sc[1]; flow[flow.length - 1][1] = sc[0] - sc[1]; } };
+  const two = (i, O, D) => { const good = chance(clamp(.47 + (O.passOff - D.passDef) * .004, .3, .62)); if (good) { sc[i] += 2; q[i][Math.min(4, Math.floor(clock / 900))] += 2; const s = smry[smry.length - 1]; s[2] += " (two-point try good)"; s[3] = sc[0]; s[4] = sc[1]; flow[flow.length - 1][1] = sc[0] - sc[1]; } else smry[smry.length - 1][2] += " (two-point try failed)"; log(i, 98, "Two-point try " + (good ? "is GOOD" : "fails"), good ? "td" : "to"); };
+  const xp = (i, O) => { const d = sc[i] - sc[1 - i]; if (o.user === i && clock > 2400 && (d === -2 || d === -5 || d === -8 || d === 1 || d === -10) && ask({ type: "2pt", i }) === "two") return two(i, O, cx[1 - i]); if (o.user !== i && clock > 3000 && (d === -2 || d === -5)) return two(i, O, cx[1 - i]); add(O.k, "xpa"); if (chance(clamp(.95 + ((O.k ? O.k.r[1] : 60) - 70) * .002, .85, .995))) { add(O.k, "xpm"); sc[i]++; q[i][Math.min(4, Math.floor(clock / 900))]++; const s = smry[smry.length - 1]; s[3] = sc[0]; s[4] = sc[1]; flow[flow.length - 1][1] = sc[0] - sc[1]; } };
 
   function drive(i, start, limit){
-    const O = cx[i], D = cx[1 - i]; let y = start, down = 1, togo = 10;
+    const O = cx[i], D = cx[1 - i], pl = PL[i] || {}, bl = (PL[1 - i] || {}).blitz || 0; let y = start, down = 1, togo = 10;
+    const punt = () => { const P = O.p, dist = round(gauss(41 + ((P ? P.r[0] : 60) - 70) * .18 - (wx === "wind" ? 3 : 0), 5)); add(P, "pu"); add(P, "puy", Math.min(dist, 100 - y)); clock += 8; const land = y + dist; log(i, y, nm(P) + " punts " + Math.min(dist, 100 - y) + " yards", "punt"); return { end: "punt", next: land >= 100 ? 20 : clamp(100 - land + rint(0, 12), 1, 99) }; };
     for (;;) {
       const late = clock > 2700, diff = sc[i] - sc[1 - i], fgDist = 100 - y + 17;
       if (clock >= limit) { if (fgDist <= 50 && limit < 9e8) return tryFG(i, O, y, fgDist); return { end: "clock", y }; }
       if (down === 4) {
         const mustGo = late && diff < 0 && (clock > 3300 || diff < -8) && !(diff >= -3 && fgDist <= 52);
-        if (!mustGo) {
+        const call = o.user === i && ((togo <= 5 && y >= 38) || (late && diff < 0 && diff >= -16)) ? ask({ type: "4th", i, y, togo, fgDist, canFG: fgDist <= 58 }) : null;
+        if (call === "fg") return tryFG(i, O, y, fgDist);
+        if (call === "punt") return punt();
+        if (!mustGo && call !== "go") {
           if (fgDist <= 54 && !(togo <= 1 && y >= 97)) return tryFG(i, O, y, fgDist);
-          if (!(togo <= 2 && y >= 50 && chance(.55))) {
-            const P = O.p, dist = round(gauss(41 + ((P ? P.r[0] : 60) - 70) * .18, 5)); add(P, "pu"); add(P, "puy", Math.min(dist, 100 - y)); clock += 8;
-            const land = y + dist; log(i, y, nm(P) + " punts " + Math.min(dist, 100 - y) + " yards", "punt");
-            return { end: "punt", next: land >= 100 ? 20 : clamp(100 - land + rint(0, 12), 1, 99) };
-          }
+          if (!(togo <= 2 + (pl.fourth || 0) && y >= 50 - (pl.fourth || 0) * 8 && chance(.55 + (pl.fourth || 0) * .3))) return punt();
         }
       }
-      let pPass = .56 + (togo > 7 && down > 1 ? .17 : 0) - (togo <= 2 ? .2 : 0) + (O.passOff - O.runOff) * .004;
+      if (crowd && i === 1 && chance(crowd * .012)) { const back = Math.min(5, y - 1); y -= back; togo += back; log(i, y, "False start — the crowd is deafening", ""); }
+      let pPass = .56 + (togo > 7 && down > 1 ? .17 : 0) - (togo <= 2 ? .2 : 0) + (O.passOff - O.runOff) * .004 + (pl.pass || 0) * .09 - WX[3];
       if (late) pPass += diff > 0 ? -.2 : diff < 0 ? .15 : 0;
       tot[i].pl++;
       let gain = 0, to = false, td = false, inc = false, txt = ""; const qb = O.qb;
       if (chance(clamp(pPass, .15, .9))) {
-        if (chance(clamp(.054 + (D.rush - O.pblk) * .0026, .02, .15))) {
+        if (chance(clamp(.054 + (D.rush - O.pblk) * .0026 + bl * .014, .02, .17))) {
           gain = -rint(3, 10); const d = wpick(D.rushers); add(qb, "sk"); add(d, "sck"); add(d, "tk"); add(d, "tfl"); add(pick(O.ol), "sal");
-          txt = nm(qb) + " sacked by " + nm(d) + " for " + gain; if (chance(.07)) { to = true; add(d, "ff"); add(qb, "fum"); txt += ", FUMBLE — defense recovers"; }
+          txt = nm(qb) + " sacked by " + nm(d) + " for " + gain; if (chance(.07 * WX[2])) { to = true; add(d, "ff"); add(qb, "fum"); txt += ", FUMBLE — defense recovers"; }
         } else if (qb && chance(clamp((qb.r[3] - 52) * .0025, 0, .11))) {
           gain = clamp(round(gauss(6.5, 5)), -2, 100 - y); add(qb, "ra"); add(qb, "ry", gain); tot[i].ry += gain; txt = nm(qb) + " scrambles for " + gain;
           if (y + gain >= 100) { td = true; add(qb, "rtd"); } else add(wpick(D.passTk), "tk");
         } else {
           const tgt = wpick(O.targets); add(qb, "pa"); add(tgt, "tg");
-          if (chance(clamp(.025 + (D.cover - (qb ? qb.r[1] : 50)) * .0009, .008, .055))) {
+          if (chance(clamp(.025 + (D.cover - (qb ? qb.r[1] : 50)) * .0009 + bl * .003, .008, .06))) {
             to = true; const d = wpick(D.dbs); add(d, "int"); add(d, "pd"); add(qb, "pi"); txt = nm(qb) + " pass INTERCEPTED by " + nm(d);
             if (chance(.05)) { add(d, "dtd"); clock += 12; tot[i].to++; score(1 - i, 6, nm(d) + " interception return TD"); xp(1 - i, D); log(1 - i, 100, txt + " — returned for a TOUCHDOWN", "td"); return { end: "td" }; }
-          } else if (chance(clamp(.635 + (O.passOff - D.passDef) * .0075, .38, .82))) {
-            let g = round(2 + -Math.log(1 - _rng()) * (9.9 + (O.passOff - D.passDef) * .07)); if (tgt && tgt.pos === "RB") g = round(g * .65);
+          } else if (chance(clamp(.635 + (O.passOff - D.passDef) * .0075 - WX[0] - bl * .02, .36, .82))) {
+            let g = round(2 + -Math.log(1 - _rng()) * (9.9 + (O.passOff - D.passDef) * .07) * (1 + bl * .13)); if (tgt && tgt.pos === "RB") g = round(g * .65);
             gain = Math.min(g, 100 - y); add(qb, "pc"); add(qb, "py", gain); add(tgt, "rec"); add(tgt, "rcy", gain); tot[i].py += gain; txt = nm(qb) + " pass to " + nm(tgt) + " for " + gain;
             if (y + gain >= 100) { td = true; add(qb, "ptd"); add(tgt, "rctd"); } else add(wpick(D.passTk), "tk");
           } else { inc = true; txt = nm(qb) + " pass incomplete to " + nm(tgt); if (chance(.3)) add(wpick(D.dbs), "pd"); }
@@ -413,9 +419,9 @@ function simGame(G, H, A, o = {}){
         const car = wpick(O.backs) || qb; let g = round(gauss(3.7 + (O.runOff - D.runDef) * .075, 4.2)); if (chance(.03)) g += rint(10, 50);
         gain = clamp(g, -5, 100 - y); add(car, "ra"); add(car, "ry", gain); tot[i].ry += gain; if (gain >= 5 && chance(.5)) add(pick(O.ol), "pk"); txt = nm(car) + " runs for " + gain;
         if (y + gain >= 100) { td = true; add(car, "rtd"); }
-        else { const d = wpick(D.runTk); add(d, "tk"); if (gain < 0) add(d, "tfl"); if (chance(.011)) { to = true; add(car, "fum"); add(d, "ff"); txt += ", FUMBLE — defense recovers"; } }
+        else { const d = wpick(D.runTk); add(d, "tk"); if (gain < 0) add(d, "tfl"); if (chance(.011 * WX[2])) { to = true; add(car, "fum"); add(d, "ff"); txt += ", FUMBLE — defense recovers"; } }
       }
-      clock += inc ? 7 : (late && diff > 0 ? 37 : late && diff < 0 ? 24 : 31);
+      clock += inc ? 7 : (late && diff > 0 ? 37 : late && diff < 0 ? 24 : 31 - round((pl.tempo || 0) * 5));
       y += gain; tot[i].yd += gain;
       if (td) { score(i, 6, txt.replace(/^(\S+ \S+) (pass to|runs for|scrambles for)/, "$1 $2").replace(" for " + gain, " " + gain + " yd") + " TD"); xp(i, O); log(i, 100, txt + " — TOUCHDOWN", "td"); return { end: "td" }; }
       if (to) { tot[i].to++; log(i, y, txt, "to"); return { end: "to", y: clamp(y, 1, 99) }; }
@@ -426,7 +432,7 @@ function simGame(G, H, A, o = {}){
   }
   function tryFG(i, O, y, dist){
     const k = O.k; add(k, "fga"); clock += 5;
-    if (chance(clamp(1.22 - dist * .0125 + ((k ? k.r[1] : 60) - 70) * .004, .2, .99))) { add(k, "fgm"); if (k) { const l = L[k.id]; l.fgl = Math.max(l.fglMax || 0, dist); l.fglMax = l.fgl; } score(i, 3, nm(k) + " " + dist + " yd field goal"); log(i, y, nm(k) + " " + dist + "-yard field goal is GOOD", "fg"); return { end: "fg" }; }
+    if (chance(clamp(1.22 - dist * .0125 + ((k ? k.r[1] : 60) - 70) * .004 - WX[1] * (dist > 30 ? 1 : .4), .15, .99))) { add(k, "fgm"); if (k) { const l = L[k.id]; l.fgl = Math.max(l.fglMax || 0, dist); l.fglMax = l.fgl; } score(i, 3, nm(k) + " " + dist + " yd field goal"); log(i, y, nm(k) + " " + dist + "-yard field goal is GOOD", "fg"); return { end: "fg" }; }
     log(i, y, nm(k) + " " + dist + "-yard field goal is no good", "to"); return { end: "fgmiss", y: clamp(y, 1, 99) };
   }
   const next = r => r.end === "td" || r.end === "fg" ? 25 : r.end === "safety" ? 35 : r.end === "punt" ? r.next : r.end === "clock" ? 25 : 100 - r.y;
@@ -484,7 +490,7 @@ function applyGame(G, g, r, o = {}){
   g.top = lines.map(a => a.slice(0, 3).map(x => [x[0], lineText(x[2])]));
   if (o.keepBox) g.box = lines.map(a => a.map(x => [x[0], x[2]]));
   const best = lines[0].concat(lines[1]).sort((x, y) => y[1] - x[1])[0]; if (best) g.potg = best[0];
-  r.hurt.forEach(([p, wks]) => { if (p.inj) return; p.inj = wks; p.st.gm = p.st.gm || 0; if (wks >= 10) p.bigInj = G.year; if (isUser(G, p.tid)) news(G, `${p.pos} ${pname(p)} is hurt and will miss ${wks >= 10 ? "the rest of the season" : wks + " week" + (wks > 1 ? "s" : "")}.`, "inj", p.tid); });
+  r.hurt.forEach(([p, wks]) => { if (p.inj) return; if (isUser(G, p.tid) && G.fac && G.fac.med) wks = Math.max(1, round(wks * (1 - .1 * G.fac.med))); p.inj = wks; p.st.gm = p.st.gm || 0; if (wks >= 10) p.bigInj = G.year; if (isUser(G, p.tid)) news(G, `${p.pos} ${pname(p)} is hurt and will miss ${wks >= 10 ? "the rest of the season" : wks + " week" + (wks > 1 ? "s" : "")}.`, "inj", p.tid); });
   if (r.pbp) (G._pbp || (G._pbp = {}))[g.id] = r.pbp;
   if (!H.pro && !o.post) lines.forEach((a, i) => a.slice(0, 2).forEach(x => (G._wk || (G._wk = [])).push([x[0], x[1], lineText(x[2])])));
   if (isUser(G, H.id) || isUser(G, A.id) || o.keepBox) g.flow = r.flow;
@@ -570,7 +576,7 @@ function buildProSchedule(G){
 
 /* ----------------------------- season start ----------------------------- */
 function startSeason(G){
-  G.gid = G.gid || 0; G.ivLeft = 12; G.week = 1; G.phase = "reg"; G.offStep = 0;
+  G.gid = G.gid || 0; ensureStaff(G); G.ivLeft = 12 + (G.mode === "pro" ? staffBonus(G, "sc") + ((G.fac || {}).recruit || 0) : 0); G.offers = []; G.week = 1; G.phase = "reg"; G.offStep = 0;
   [...G.col, ...G.pro].forEach(t => { Object.assign(t, { w: 0, l: 0, cw: 0, cl: 0, dw: 0, dl: 0, pf: 0, pa: 0, res: [], streak: 0, rank: 0, rkHist: [], morale: 0 }); });
   for (const id in G.players) { const p = G.players[id]; p.st = {}; delete p.gl; if (p.inj) delete p.inj; }
   Object.values(G.confs).forEach(c => delete c.champ);
@@ -612,10 +618,10 @@ function gameTeams(G, g){
   const H = T(G, g.h), A = g.a < 0 ? { fcs: true, id: -1, name: g.fcs, abbr: "FCS", rating: 40 + (g.id % 15), c1: "#64748b", c2: "#e2e8f0" } : T(G, g.a);
   return [H, A];
 }
-function playGame(G, g){
+function playGame(G, g, pre){
   const [H, A] = gameTeams(G, g), user = isUser(G, g.h) || isUser(G, g.a);
   const big = !H.pro && A.rank > 0 && H.rank > 0;
-  const r = simGame(G, H, A, { neutral: g.neutral, pbp: user });
+  const r = pre || simGame(G, H, A, gameOpts(G, g, { pbp: user })); if (weatherFor(G, g)) g.wx = weatherFor(G, g);
   applyGame(G, g, r, { post: !!g.post, keepBox: user || big || !!g.post });
   if (g.riv != null) {
     const rv = G.riv.find(x => x.i === g.riv), win = g.hs > g.as ? g.h : g.a;
@@ -634,13 +640,14 @@ const userGame = (G, w) => [...G.cs, ...G.ps].find(g => g.w === w && (g.h === G.
 /* ----------------------------- advancing the calendar ----------------------------- */
 function simWeek(G){
   if (G.phase !== "reg") return;
-  const w = G.week; G._wk = [];
+  const w = G.week; G._wk = G._wkPre || []; G._wkPre = null;
   expireEvents(G);
   G.cs.filter(g => g.w === w && !g.done).forEach(g => playGame(G, g));
   G.ps.filter(g => g.w === w && !g.done).forEach(g => playGame(G, g));
   for (const id in G.players) { const p = G.players[id]; if (p.inj) { p.st.gm = (p.st.gm || 0) + 1; if (--p.inj <= 0) delete p.inj; } }
   resolvePicks(G, w);
-  if (w === TRADE_DEADLINE) { aiTrades(G, 4); news(G, "The pro trade deadline has passed. Rosters are set until the offseason.", "pro"); }
+  if (G.mode === "pro" && w >= 4 && w < TRADE_DEADLINE) deadlineOffers(G);
+  if (w === TRADE_DEADLINE) { G.offers = []; aiTrades(G, 4); news(G, "The pro trade deadline has passed. Rosters are set until the offseason.", "pro"); }
   // College side of the calendar.
   if (w <= COL_WEEKS) { rankCollege(G); weeklyHonors(G, w); heismanWatch(G); }
   if (w === COL_WEEKS) setupConfTitles(G);
@@ -814,6 +821,20 @@ function voteAward(G, A, name, cands, n, win){
   v.slice(0, 5).forEach((x, i) => (x.p.av || (x.p.av = [])).push([G.year, name, i + 1, x.pts]));
   return v[0].p;
 }
+// A first-year pro. Drafted players have already had exp bumped to 1 by the time their first season
+// kicks off, so experience alone misses them: go by draft year (or the undrafted note).
+const isRookie = (G, p) => p.exp != null && (p.exp === 0 || !!(p.draft && p.draft.y === G.year) || p.tx.some(x => x[0] === G.year && /Went undrafted/.test(x[1])));
+// One-time repair for saves whose rookie awards were handed out under the old rule: re-run both
+// Rookie of the Year votes and the All-Rookie team on the season so far.
+function redoRookies(G){
+  const P = G.awards && G.awards.pro; if (!P || P.rkFix) return false;
+  const names = ["Offensive Rookie of the Year", "Defensive Rookie of the Year"], all = proPlayers(G).filter(p => (p.st.g || 0) >= 6), h = seasonHist(G);
+  for (const id in G.players) { const p = G.players[id]; if (p.aw && p.aw.length) p.aw = p.aw.filter(a => !(a[0] === G.year && (names.includes(a[1]) || a[1] === "All-Rookie Team"))); if (p.av) p.av = p.av.filter(a => !(a[0] === G.year && names.includes(a[1]))); }
+  P.list = P.list.filter(x => !names.includes(x.a)); P.votes = P.votes || {};
+  proVoted(G, all).filter(v => names.includes(v[0])).forEach(([name, pool, f, note], k) => { delete P.votes[name]; const w = voteAward(G, P, name, pool.map(p => [p, f(p)]), 50); if (!w) return; w.aw.push([G.year, name]); P.list.splice(Math.min(P.list.length, 3 + k), 0, Object.assign({ a: name, note }, ref(G, w)));
+    news(G, `Late ballots are in: ${w.pos} ${pname(w)} of the ${T(G, w.tid).nick} is the ${name}.`, "award", w.tid); });
+  allRookie(G, P, all); h.proAwards = P.list; return true;
+}
 // The awards that are decided by a vote: [name, candidate pool, score, note].
 function colVoted(G, all){
   const tf = p => .72 + .4 * winPct(T(G, p.tid));
@@ -826,10 +847,10 @@ function proVoted(G, all){
   return [["Most Valuable Player", off, p => seasonValue(p) * (p.pos === "QB" ? 1.2 : 1) * tf(p), "League MVP"],
     ["Offensive Player of the Year", off, p => seasonValue(p) * (p.pos === "QB" ? .92 : 1.1), ""],
     ["Defensive Player of the Year", def, p => seasonValue(p) * (.85 + .2 * tf(p)), ""],
-    ["Offensive Rookie of the Year", off.filter(p => p.exp === 0), p => seasonValue(p) * (p.pos === "QB" ? 1.1 : 1), ""],
-    ["Defensive Rookie of the Year", def.filter(p => p.exp === 0), p => seasonValue(p), ""]];
+    ["Offensive Rookie of the Year", off.filter(p => isRookie(G, p)), p => seasonValue(p) * (p.pos === "QB" ? 1.1 : 1), ""],
+    ["Defensive Rookie of the Year", def.filter(p => isRookie(G, p)), p => seasonValue(p), ""]];
 }
-function allRookie(G, A, all){ const [ar] = allTeams(G, all.filter(p => p.exp === 0), 1); ar.forEach(p => p.aw.push([G.year, "All-Rookie Team"])); A.rook = ar.map(p => ref(G, p)); }
+function allRookie(G, A, all){ const [ar] = allTeams(G, all.filter(p => isRookie(G, p)), 1); A.rkFix = 1; ar.forEach(p => p.aw.push([G.year, "All-Rookie Team"])); A.rook = ar.map(p => ref(G, p)); }
 // Saves made before award voting existed: add the ballots for this season's awards without changing who won.
 function backfillVotes(G){
   const P = G.awards && G.awards.pro, C = G.awards && G.awards.col;
@@ -906,7 +927,7 @@ function collegeAwards(G){
 }
 
 function proAwards(G){
-  const all = proPlayers(G).filter(p => (p.st.g || 0) >= 6), A = G.awards.pro = { list: [] }, tf = p => .7 + .45 * winPct(T(G, p.tid));
+  const all = proPlayers(G).filter(p => (p.st.g || 0) >= 6), A = G.awards.pro = { list: [], rkFix: 1 }, tf = p => .7 + .45 * winPct(T(G, p.tid));
   const give = (name, p, note) => { if (!p) return; p.aw.push([G.year, name]); A.list.push(Object.assign({ a: name, note }, ref(G, p))); };
   const off = all.filter(p => isOff(p.pos) && GROUP(p.pos) !== "OL"), def = all.filter(p => isDef(p.pos));
   proVoted(G, all).forEach(([name, pool, f, note]) => { const w = voteAward(G, A, name, pool.map(p => [p, f(p)]), 50); give(name, w, note); if (w && isUser(G, w.tid)) { news(G, `Your ${w.pos} ${pname(w)} is the ${name}.`, "award", w.tid); gainLP(G, /Valuable/.test(name) ? 6 : 3, name); } });
@@ -920,6 +941,7 @@ function proAwards(G){
   A.ap1 = a1.map(p => ref(G, p)); A.ap2 = a2.map(p => ref(G, p));
   A.pb = {}; PRO_CONFS.forEach(c => { const t = allTeams(G, all.filter(p => T(G, p.tid).conf === c), 2).flat(); t.forEach(p => p.aw.push([G.year, "Pro Bowl"])); A.pb[c] = t.map(p => ref(G, p)); });
   const h = seasonHist(G); h.proAwards = A.list; h.ap1 = A.ap1; h.coyPro = A.coy;
+  allStarGame(G);
   const mvp = A.list[0]; if (mvp) news(G, `${mvp.pos} ${mvp.n} of the ${T(G, mvp.tid).nick} is the league MVP.`, "award", mvp.tid);
 }
 
@@ -982,8 +1004,9 @@ function beginOffseason(G){
     else { t.coach = makeCoach(G, 34 + t.prestige * .5); t.coach.since = G.year + 1; if (t.prestige >= 70) news(G, `${t.name} fires ${old.name} and hires ${t.coach.name}.`, "coach", t.id); }
   });
   G.openJobs = fired.filter(t => !isUser(G, t.id)).map(t => t.id);
-  G.pro.forEach(t => { if (isUser(G, t.id)) return; const h = t.hist.slice(-2); t.coach.age++; if (h.length === 2 && h.every(r => r.w <= 5) && G.year - t.coach.since >= 1) { const old = t.coach; t.coach = makeCoach(G, 68); t.coach.since = G.year + 1; news(G, `The ${t.nick} fire ${old.name}; ${t.coach.name} takes over.`, "coach", t.id); } });
-  if (G.mode === "college") jobOffers(G);
+  G.openPro = [];
+  G.pro.forEach(t => { if (isUser(G, t.id)) return; const h = t.hist.slice(-2); t.coach.age++; if (h.length === 2 && h.every(r => r.w <= 5) && G.year - t.coach.since >= 1) { const old = t.coach; G.openPro.push(t.id); t.coach = makeCoach(G, 68); t.coach.since = G.year + 1; news(G, `The ${t.nick} fire ${old.name}; ${t.coach.name} takes over.`, "coach", t.id); } });
+  jobReview(G); staffOffseason(G); realignment(G);
   // --- pro: retirements and expiring deals ---
   proPlayers(G).concat(Object.values(G.players).filter(p => p.fa)).forEach(p => {
     const old = p.age >= 38 || (p.age >= 35 && chance(.5)) || (p.age >= 31 && p.ovr < 72 && chance(.45)) || (p.fa && (p.age >= 29 || p.ovr < 64));
@@ -994,7 +1017,7 @@ function beginOffseason(G){
   const pool = [];
   colPlayers(G).forEach(p => {
     const t = T(G, p.tid), dv = draftValue(p), early = p.cls === 2 && !p.stay && (dv >= 79 || (dv >= 75 && chance(.5)));
-    if (p.cls === 3 || early) { p.dcl = G.year; p.tx.push([G.year, early ? `Declared early for the draft (${t.name})` : `Finished his eligibility at ${t.name}`]); leaveCollege(G, p); p.tid = null; pool.push(p);
+    if ((p.cls === 3 && p.rs !== G.year) || early) { p.dcl = G.year; p.tx.push([G.year, early ? `Declared early for the draft (${t.name})` : `Finished his eligibility at ${t.name}`]); leaveCollege(G, p); p.tid = null; pool.push(p);
       if (early && (isUser(G, t.id) || dv >= 84)) news(G, `${t.name} ${p.pos} ${pname(p)} declares for the draft.`, "draft", t.id); }
   });
   G._ros = null;
@@ -1011,7 +1034,8 @@ function beginOffseason(G){
     if ((buried && chance(.3)) || (big && chance(.35)) || chance(.012)) { p.portal = 1; G.portal.push(p.id); } }));
   });
   genRecruits(G);
-  G.pitchLeft = 15 + (G.bonusPitch || 0); G.bonusPitch = 0; G.pitches = {};
+  G.pitchLeft = 15 + (G.bonusPitch || 0) + staffBonus(G, "rc"); G.bonusPitch = 0; G.pitches = {}; nilReset(G);
+  if (G.mode === "pro") G.ivLeft += staffBonus(G, "sc") * 2 + ((G.fac || {}).recruit || 0) * 3;
   news(G, `The ${G.year} season is in the books. ${G.draft.pool.length} prospects are in the draft pool, ${G.portal.length} players have entered the transfer portal, and ${G.rec.length} recruits are waiting on Signing Day.`, "off");
 }
 
@@ -1110,7 +1134,7 @@ function genRecruits(G){
   G.rec.forEach((id, i) => (G.players[id].rk = i + 1));
 }
 const homeBonus = (p, t) => { const st = p.home.slice(-2); return st === t.state ? 9 : REGION[st] && REGION[st] === REGION[t.state] ? 4 : 0; };
-function schoolPull(G, p, t, noise){ return t.prestige + homeBonus(p, t) + (noise ? gauss(0, 9) : 0) + (isUser(G, t.id) ? (G.pitches[p.id] || 0) * (G.scouted[p.id] ? 11 : 9) + (G.perks.rec || 0) * 2 : 0) + prioBonus(p, t) + (t.coach.ovr - 60) * .08; }
+function schoolPull(G, p, t, noise){ return t.prestige + homeBonus(p, t) + (noise ? gauss(0, 9) : 0) + (isUser(G, t.id) ? (G.pitches[p.id] || 0) * (G.scouted[p.id] ? 11 : 9) + (G.perks.rec || 0) * 2 + nilPull(p, G.nil && G.nil.deals[p.id]) + ((G.fac || {}).recruit || 0) : 0) + prioBonus(p, t) + (t.coach.ovr - 60) * .08; }
 // The three schools most likely to land a recruit, as things stand (no luck applied).
 function recruitLeaders(G, p){
   const open = G.col.filter(t => t.id !== p.tid && rosterOf(G, t.id).filter(x => x.pos === p.pos && !x.portal).length + (G._signed && G._signed[t.id + p.pos] || 0) < COL_NEED[p.pos] + (p.portal ? 1 : 0));
@@ -1149,14 +1173,15 @@ function progression(G){
   for (const id in G.players) {
     const p = G.players[id]; if (p.ret) continue; if (p.tid == null && !p.fa) continue;
     p.age++; let d;
-    if (p.tid != null && p.tid >= 100) { const t = T(G, p.tid); d = gauss((p.pot - p.ovr) * .3 + .9 + (t.coach.ovr - 60) * .015 + (isUser(G, t.id) ? (G.perks.dev || 0) * .3 : 0), 2); d = clamp(d, -1, 9); p.cls = Math.min(3, (p.cls || 0) + (p.enr === G.year + 1 ? 0 : 1)); }
-    else { p.exp = (p.exp || 0) + 1; d = p.age <= 25 ? gauss((p.pot - p.ovr) * .3 + .4, 1.8) : p.age <= 29 ? gauss(0, 1.2) : p.age <= 32 ? gauss(-1.2, 1.5) : gauss(-2.6, 1.6); }
+    if (p.tid != null && p.tid >= 100) { const t = T(G, p.tid); d = gauss((p.pot - p.ovr) * .3 + .9 + (t.coach.ovr - 60) * .015 + (isUser(G, t.id) ? (G.perks.dev || 0) * .3 + ((G.fac || {}).train || 0) * .22 : 0), 2); d = clamp(d, -1, 9); if (p.rs === G.year) p.rsd = 1; p.cls = Math.min(3, (p.cls || 0) + (p.enr === G.year + 1 || p.rs === G.year ? 0 : 1)); }
+    else { p.exp = (p.exp || 0) + 1; d = p.age <= 25 ? gauss((p.pot - p.ovr) * .3 + .4 + (isUser(G, p.tid) ? ((G.fac || {}).train || 0) * .18 : 0), 1.8) : p.age <= 29 ? gauss(0, 1.2) : p.age <= 32 ? gauss(-1.2, 1.5) : gauss(-2.6, 1.6); }
     tweakRatings(p, round(d + (p.age <= 26 ? (trait(p, "we") - 3) * .3 : 0))); p.ovh.push([G.year + 1, p.ovr]); if (p.ovh.length > 22) p.ovh.shift();
   }
 }
 
 function advanceOff(G){
-  const s = G.offStep; expireEvents(G, true);
+  const s = G.offStep; if (G.coach.fired) { const ev = G.events.find(e => e.key === "job" && !e.done); if (ev) chooseEvent(G, ev.id, 0); delete G.coach.fired; }
+  expireEvents(G, true);
   if (s === 0) { if (G.mode !== "pro") aiResign(G); }
   else if (s === 1) { aiResign(G); if (G.mode !== "pro") aiFreeAgency(G); }
   else if (s === 2) { aiFreeAgency(G); aiTrades(G, 3); draftRun(G, false); }
@@ -1255,6 +1280,196 @@ function aiTrades(G, n){
       if (!b) continue; const pk = teamPicks(G, b.id).filter(a => a.v <= v * 1.1 && a.v >= v * .55).sort((x, y) => y.v - x.v)[0];
       doTrade(G, s.id, b.id, [{ p }], [pk]); made++; break; } }
   return made;
+}
+
+/* ===== 05c-dynasty.js ===== */
+
+/* =========================================================================
+   Game day (weather, crowd, game plan, key calls) and the long game
+   (staff, NIL, job security, redshirts, facilities, realignment, deadline
+   offers, all-star game, what-if replays, greatest teams)
+   ========================================================================= */
+
+/* ----------------------------- game day ----------------------------- */
+const hk = (id, k) => { const x = Math.sin((id + 1) * 12.9898 + (hashSeed(k) % 9973) * 78.233) * 43758.5453; return x - Math.floor(x); };   // 0..1, stable per id + key
+const COLD = ["MI", "WI", "MN", "NY", "OH", "PA", "IL", "IN", "IA", "NE", "CO", "UT", "WY", "ID", "MT", "MA", "CT", "NJ", "WV", "KS", "MO", "SD", "ND", "WA", "OR"];
+const WX_NAME = { rain: ["🌧️", "Rain", "Wet ball: more fumbles, fewer completions"], wind: ["💨", "High wind", "Long kicks and deep throws suffer"], snow: ["❄️", "Snow", "Run-first weather: passing and kicking are harder"] };
+// Deterministic per game, so the forecast on the matchup card is what the game is played in.
+function weatherFor(G, g){
+  if (g.wx !== undefined && g.done) return g.wx || "";
+  const H = T(G, g.h); if (!H) return "";
+  const r = hk(g.id * 31 + G.year, "wx"), dome = H.pro && hk(H.id, "dome") < .3; if (dome) return "";
+  const cold = H.pro ? hk(H.id, "cold") < .45 : COLD.includes(H.state), late = g.w >= (H.pro ? 11 : 10);
+  if (cold && late && r < .2) return "snow"; if (r < .13 + (cold ? 0 : .02)) return "rain"; if (r > .9) return "wind"; return "";
+}
+const crowdOf = (G, H) => H.fcs ? 0 : clamp(H.pro ? .55 + hk(H.id, "crowd") * .45 : (H.prestige - 40) / 55, .1, 1) + (isUser(G, H.id) ? ((G.fac || {}).stad || 0) * .08 : 0);
+const OC_SCHEMES = { "Air Raid": .8, "Pro Style": .1, "Spread Option": -.25, "Ground & Pound": -.8 }, DC_SCHEMES = { "Blitz-Heavy": .8, "4-3 Base": 0, "Cover 2 Shell": -.7 };
+const defaultPlan = G => ({ pass: G.staff && G.staff.oc ? OC_SCHEMES[G.staff.oc.scheme] || 0 : 0, tempo: 0, blitz: G.staff && G.staff.dc ? DC_SCHEMES[G.staff.dc.scheme] || 0 : 0, fourth: 0 });
+function planOf(G, t){
+  if (!t || t.fcs) return {};
+  if (isUser(G, t.id)) return Object.assign(defaultPlan(G), G.plan || {});
+  const h = k => (hk(hashSeed(t.coach ? t.coach.name : t.id) % 99991, k) - .5) * 1.2; return { pass: h("p"), tempo: h("t") * .6, blitz: h("b"), fourth: h("f") * .5 };
+}
+function gameOpts(G, g, extra){ const [H, A] = gameTeams(G, g); return Object.assign({ neutral: g.neutral, wx: weatherFor(G, g), crowd: crowdOf(G, H), plan: [planOf(G, H), planOf(G, A)] }, extra || {}); }
+// Where each side has the edge, for the matchup card.
+function matchupEdges(G, g){
+  const [H, A] = gameTeams(G, g), me = isUser(G, H.id) ? H : A, opp = me === H ? A : H, a = lineup(G, me, 0), b = lineup(G, opp, 0);
+  return [["Your pass game vs their pass defense", a.passOff - b.passDef], ["Your run game vs their run defense", a.runOff - b.runDef], ["Their pass game vs your pass defense", a.passDef - b.passOff], ["Their run game vs your run defense", a.runDef - b.runOff]].map(([l, v]) => ({ l, v: round(v) }));
+}
+// Play the user's game now, stopping whenever a fourth-down or two-point call is theirs to make.
+// The same seed is replayed with one more answer each time, so earlier plays never change.
+function coachGame(G, g, calls){
+  const [H, A] = gameTeams(G, g), keep = _rng; if (!g._seed) g._seed = (Math.random() * 2147483647) | 0;
+  _rng = mulberry32(g._seed);
+  try { const r = simGame(G, H, A, gameOpts(G, g, { pbp: true, user: isUser(G, g.h) ? 0 : 1, calls: (calls || []).slice(), ask: true })); _rng = keep; return { r }; }
+  catch (e) { _rng = keep; if (e && e._need) return { need: e._need }; throw e; }
+}
+function finishCoached(G, g, r){ const keep = G._wk; G._wk = []; playGame(G, g, r); G._wkPre = G._wk; G._wk = keep; delete g._seed; }
+
+/* ----------------------------- coaching staff ----------------------------- */
+const STAFF_ROLES = G => [["oc", "Offensive coordinator"], ["dc", "Defensive coordinator"], G.mode === "pro" ? ["sc", "Scouting director"] : ["rc", "Recruiting coordinator"]];
+function makeStaff(G, role, q){ return { name: pick(FIRST) + " " + pick(LAST), age: rint(31, 62), ovr: clamp(round(gauss(q, 7)), 45, 96), scheme: role === "oc" ? pick(Object.keys(OC_SCHEMES)) : role === "dc" ? pick(Object.keys(DC_SCHEMES)) : "", since: G.year }; }
+function staffQuality(G){ const t = userTeam(G); return t.pro ? 68 + ((t.hist[t.hist.length - 1] || { w: 8 }).w - 8) * .8 : 48 + t.prestige * .3; }
+function ensureStaff(G){
+  G.staff = G.staff || {}; const q = staffQuality(G);
+  STAFF_ROLES(G).forEach(([k]) => { if (!G.staff[k]) G.staff[k] = makeStaff(G, k, q); });
+  ["rc", "sc"].forEach(k => { if (!STAFF_ROLES(G).some(r => r[0] === k)) delete G.staff[k]; });
+  if (!G.staffPool) staffMarket(G);
+}
+function staffMarket(G){ const q = staffQuality(G) + 3; G.staffPool = {}; STAFF_ROLES(G).forEach(([k]) => (G.staffPool[k] = Array.from({ length: 4 }, () => makeStaff(G, k, q)).sort((a, b) => b.ovr - a.ovr))); G.staffHired = {}; }
+function hireStaff(G, role, i){ const c = G.staffPool[role][i]; if (!c || G.staffHired[role]) return false; const old = G.staff[role]; G.staff[role] = c; c.since = G.year + (G.phase === "off" ? 1 : 0); G.staffPool[role].splice(i, 1); G.staffHired[role] = 1; news(G, `${userTeam(G).pro ? "The " + userTeam(G).nick : userTeam(G).name} hire${userTeam(G).pro ? "" : "s"} ${c.name} as ${STAFF_ROLES(G).find(r => r[0] === role)[1].toLowerCase()}${old ? ", replacing " + old.name : ""}.`, "coach", G.uid); return true; }
+const staffBonus = (G, k) => G.staff && G.staff[k] ? Math.max(0, round((G.staff[k].ovr - 62) / 7)) : 0;
+// Offseason: coordinators age and grow, and the good ones on winning teams get head jobs.
+function staffOffseason(G){
+  ensureStaff(G); const t = userTeam(G), wp = winPct(t);
+  STAFF_ROLES(G).forEach(([k, label]) => { const c = G.staff[k]; c.age++; c.ovr = clamp(c.ovr + (c.age < 50 ? rint(0, 2) : rint(-1, 1)), 45, 97);
+    if (k !== "rc" && k !== "sc" && c.ovr >= 80 && wp >= .68 && chance(.4)) { const open = (G.openJobs || []).map(id => T(G, id)).filter(x => x && !isUser(G, x.id)), to = open.length ? pick(open) : null;
+      if (to) { to.coach = { name: c.name, age: c.age, ovr: clamp(c.ovr - 6, 50, 92), w: 0, l: 0, ch: 0, aw: [], since: G.year + 1 }; news(G, `Your ${label.toLowerCase()} ${c.name} is the new head coach at ${to.name}. You'll need a replacement.`, "coach", G.uid); }
+      else news(G, `Your ${label.toLowerCase()} ${c.name} leaves for a head coaching job. You'll need a replacement.`, "coach", G.uid);
+      G.staff[k] = makeStaff(G, k, staffQuality(G) - 6); G.staff[k].interim = 1; }
+    else if (c.age >= 68 && chance(.5)) { news(G, `${label} ${c.name} retires.`, "coach", G.uid); G.staff[k] = makeStaff(G, k, staffQuality(G) - 6); G.staff[k].interim = 1; } });
+  staffMarket(G);
+}
+
+/* ----------------------------- NIL (college) ----------------------------- */
+function nilReset(G){ const t = userTeam(G); if (t.pro) { G.nil = null; return; } const b = round(700 + t.prestige * 42 + ((t.hist[t.hist.length - 1] || { w: 6 }).w) * 70 + ((G.fac || {}).recruit || 0) * 250); G.nil = { budget: b, left: b, deals: {} }; }
+const nilPull = (p, amt) => amt ? 5 * Math.log2(1 + amt / 100) / (1 + Math.max(0, (p.stars || 3) - 3) * .25) : 0;
+function nilOffer(G, p, amt){ const n = G.nil; if (!n || n.left < amt) return false; n.left -= amt; n.deals[p.id] = (n.deals[p.id] || 0) + amt; return true; }
+const retainCost = p => round((Math.max(0, p.ovr - 60) * 28 + 120) / 10) * 10;
+function retainPlayer(G, p){ const c = retainCost(p), n = G.nil; if (!n || n.left < c || !p.portal) return false; n.left -= c; delete p.portal; p.stay = 1; G.portal = (G.portal || []).filter(id => id !== p.id); p.tx.push([G.year, `Pulled his name from the portal to stay at ${T(G, p.tid).name}`]); news(G, `${p.pos} ${pname(p)} withdraws from the portal and stays.`, "portal", p.tid); return true; }
+
+/* ----------------------------- job security, offers, firing ----------------------------- */
+function coachRep(G){ const c = G.coach, g = c.w + c.l; return (g ? c.w / g : .5) * 60 + Math.min(20, c.hist.length * 1.5) + c.hist.filter(r => /National Champions|Won Pocket Bowl/.test(r.note || "")).length * 8 + c.hist.filter(r => r.cc).length * 2; }
+function takeJob(G, tid){
+  const old = userTeam(G), nt = T(G, tid); old.coach = makeCoach(G, old.pro ? 68 : 34 + old.prestige * .5); old.coach.since = G.year + 1;
+  G.uid = nt.id; G.mode = nt.pro ? "pro" : "college"; nt.coach = { name: G.coach.name, age: 45, ovr: 70, w: 0, l: 0, ch: 0, aw: [], since: G.year + 1 };
+  G.pitches = {}; G.dc = {}; G.plan = null; G.staff = null; G.staffPool = null; G.offers = []; G.coach.sec = 62; G.coach.at = G.year + 1; delete G.coach.fired; ensureStaff(G); nilReset(G); G._ros = null;
+  news(G, `${G.coach.name} leaves ${old.pro ? "the " + old.nick : old.name} to take over ${nt.pro ? "the " + nt.city + " " + nt.nick : "at " + nt.name}.`, "coach", nt.id);
+  return nt;
+}
+// End of season: the seat warms or cools against what the job expects, then the phone rings (or the AD does).
+function jobReview(G){
+  const t = userTeam(G), c = G.coach, row = t.hist[t.hist.length - 1] || {}, wp = (row.w + row.l) ? row.w / (row.w + row.l) : .5, exp = t.pro ? .5 : (t.prestige - 45) / 52 * .62 + .2;
+  const title = /National Champions|Won Pocket Bowl/.test(row.post || ""), bonus = title ? 25 : t.pro ? (row.post ? 8 : 0) : (row.cc ? 8 : 0) + (/Won/.test(row.post || "") ? 3 : 0);
+  c.sec = clamp(round((c.sec == null ? 62 : c.sec) + (wp - exp) * (t.pro ? 75 : 95) + bonus), 0, 100); c.at = c.at || G.year;
+  const years = G.year - c.at + 1, rep = coachRep(G), nm = x => x.pro ? "the " + x.city + " " + x.nick : x.name;
+  G.events = G.events.filter(e => e.key !== "job");
+  if (c.sec <= 8 && years >= 3) {
+    const pool = t.pro ? G.pro.filter(x => x.id !== t.id).sort((a, b) => winPct(a) - winPct(b)).slice(0, 2).concat(G.col.filter(x => x.prestige >= 55 && x.prestige <= 72).sort(() => _rng() - .5).slice(0, 2))
+      : G.col.filter(x => x.id !== t.id && x.prestige < t.prestige - 6 && x.prestige > t.prestige - 30).sort(() => _rng() - .5).slice(0, 3);
+    if (pool.length) { c.fired = pool.map(x => x.id); news(G, `${t.pro ? "The " + t.nick : t.name} ${t.pro ? "fire" : "fires"} ${c.name} after a ${row.w}-${row.l} season.`, "coach", t.id);
+      G.events.push({ id: ++G.gid, key: "job", w: 99, title: "You've been let go", body: `${t.pro ? "Ownership" : "The administration"} has decided to make a change after ${years} seasons. These jobs are open to you — pick one before the offseason moves on, or you'll land at the first.`, ctx: { jobs: c.fired, fired: 1 }, opts: pool.map(j => ({ l: "Take over " + nm(j), d: j.pro ? `Pro · ${j.w}-${j.l} last season` : `${G.confs[j.conf].name} · prestige ${round(j.prestige)}` })) }); }
+    return;
+  }
+  const score = coachScore(t, t.pro), jobs = [];
+  if (!t.pro) (G.openJobs || []).map(id => T(G, id)).filter(x => x.prestige > t.prestige + 3 && x.prestige < t.prestige + 12 + score * 5).sort((a, b) => b.prestige - a.prestige).slice(0, 2).forEach(x => jobs.push(x));
+  if (rep >= (t.pro ? 62 : 58) && (score >= 1.5 || t.pro && wp >= .65)) ((G.openPro || []).length ? G.openPro : G.pro.slice().sort((a, b) => winPct(a) - winPct(b)).slice(0, 2).map(x => x.id)).map(id => T(G, id)).filter(x => x && x.id !== t.id).slice(0, t.pro ? 2 : 1).forEach(x => jobs.push(x));
+  if (!jobs.length || (!t.pro && score < 1.5 && !jobs.some(j => j.pro))) return;
+  G.events.push({ id: ++G.gid, key: "job", w: 99, title: "Job offers", body: `Your ${row.w}-${row.l} season got noticed. ${jobs.map(nm).join(", ")} ${jobs.length > 1 ? "have" : "has"} called. Taking a job moves you there for good — your record and trophies come with you${jobs.some(j => j.pro !== t.pro) ? ", and a move between college and the pros changes the whole job" : ""}.`, ctx: { jobs: jobs.map(j => j.id) }, opts: [...jobs.map(j => ({ l: "Take over " + nm(j), d: j.pro ? "Pro general manager · " + j.w + "-" + j.l + " last season" : `${G.confs[j.conf].name} · prestige ${round(j.prestige)}` })), { l: "Stay " + (t.pro ? "with the " + t.nick : "at " + t.name), d: "Loyalty: +4 Legacy Points and a safer seat" }] });
+}
+const seatLabel = s => s >= 80 ? ["Untouchable", "#4ade80"] : s >= 60 ? ["Secure", "#a3e635"] : s >= 40 ? ["Steady", "#fbbf24"] : s >= 20 ? ["Warm seat", "#fb923c"] : ["Hot seat", "#f87171"];
+
+/* ----------------------------- redshirts + medical ----------------------------- */
+const canRedshirt = (G, p) => p.cls != null && !p.rsd && p.tid === G.uid && G.phase === "reg" && (p.st.g || 0) <= 4 && G.week <= 10;
+function toggleRedshirt(G, p){ if (p.rs === G.year) { delete p.rs; } else if (canRedshirt(G, p)) p.rs = G.year; G._ros = null; }
+const INJ_PARTS = ["hamstring", "ankle", "knee", "shoulder", "concussion", "groin", "foot", "wrist", "back", "calf"];
+const injPart = (G, p) => (p.inj >= 10 ? ["torn ACL", "broken leg", "torn Achilles", "shoulder surgery"] : INJ_PARTS)[Math.floor(hk(p.id + G.year * 7 + (p.inj >= 10 ? 1 : 0), "inj") * (p.inj >= 10 ? 4 : INJ_PARTS.length))];
+
+/* ----------------------------- facilities ----------------------------- */
+const FAC = G => [["train", "Training complex", "Young players develop faster"], ["med", "Medical centre", "Injuries heal 10% quicker per level"], ["stad", "Stadium", "A bigger home-field edge and louder crowd"], G.mode === "pro" ? ["recruit", "Scouting department", "+3 prospect interviews per level"] : ["recruit", "Recruiting centre", "Recruits lean your way; bigger NIL pot"]];
+const FAC_COST = [3, 5, 8, 12, 16];
+function buyFac(G, k){ G.fac = G.fac || {}; const lv = G.fac[k] || 0; if (lv >= 5 || (G.lp || 0) < FAC_COST[lv]) return false; G.lp -= FAC_COST[lv]; G.fac[k] = lv + 1; news(G, `Construction finishes on a level-${lv + 1} ${FAC(G).find(f => f[0] === k)[1].toLowerCase()}.`, "off", G.uid); return true; }
+
+/* ----------------------------- conference realignment ----------------------------- */
+function confStrength(G, cid){ return avgOf(G.col.filter(t => t.conf === cid), t => t.prestige, 0); }
+function moveConf(G, t, to){ const from = t.conf; t.conf = to; (G.realign = G.realign || []).unshift({ y: G.year + 1, tid: t.id, from, to }); news(G, `REALIGNMENT: ${t.name} will leave the ${G.confs[from].name} for the ${G.confs[to].name} next season.`, "off", t.id); }
+function realignment(G){
+  if (G.hist.length < 2 || !chance(.14)) return;
+  const confs = CONF_ORDER.filter(c => c !== "IND").map(c => [c, confStrength(G, c), G.col.filter(t => t.conf === c).length]).sort((a, b) => b[1] - a[1]);
+  const to = confs.slice(0, 4).filter(c => c[2] < 18).sort((a, b) => a[2] - b[2])[0]; if (!to) return;
+  const cand = G.col.filter(t => t.conf !== to[0] && confStrength(G, t.conf) < to[1] - 7 && t.prestige >= to[1] - 12 && G.col.filter(x => x.conf === t.conf).length > 8).sort((a, b) => b.prestige - a.prestige).slice(0, 3);
+  const t = cand.length ? pick(cand) : null; if (!t) return;
+  if (isUser(G, t.id)) G.events.push({ id: ++G.gid, key: "realign", w: 99, title: "A bigger conference calls", body: `The ${G.confs[to[0]].full} has invited ${t.name} to join next season. Tougher schedule, bigger stage — and a prestige bump for making the jump.`, ctx: { to: to[0] }, opts: [{ l: "Accept the invitation", d: "Move to the " + G.confs[to[0]].name }, { l: "Stay put", d: "Keep your rivals and your conference" }] });
+  else moveConf(G, t, to[0]);
+}
+
+/* ----------------------------- trade deadline: offers come to you ----------------------------- */
+function deadlineOffers(G){
+  if (G.mode !== "pro" || !tradeOpen(G)) { G.offers = []; return; }
+  G.offers = (G.offers || []).filter(o => o.w >= G.week && G.players[o.pid] && G.players[o.pid].tid === G.uid);
+  const mine = rosterOf(G, G.uid).filter(p => p.c && p.pos !== "K" && p.pos !== "P" && playerVal(p) >= 4), near = TRADE_DEADLINE - G.week;
+  shuffle(G.pro.filter(t => t.id !== G.uid && winPct(t) >= .45)).slice(0, near <= 1 ? 4 : 2).forEach(t => {
+    const d = depthChart(G, t.id), want = mine.filter(p => (d[p.pos][STARTERS[p.pos] - 1] || { ovr: 0 }).ovr < p.ovr - 2 && capRoom(G, t.id) >= p.c.amt && !G.offers.some(o => o.pid === p.id && o.tid === t.id)).sort((a, b) => playerVal(b) - playerVal(a)).slice(0, 4), p = want.length ? pick(want) : null;
+    if (!p || G.offers.length >= 5) return;
+    const target = playerVal(p) * (.82 + _rng() * .32), picks = teamPicks(G, t.id).sort((a, b) => b.v - a.v), get = []; let v = 0;
+    for (const a of picks) { if (get.length < 3 && v + a.v <= target) { get.push({ rd: a.rd, orig: a.orig, label: a.label, v: a.v }); v += a.v; } }
+    if (!get.length || v < playerVal(p) * .6) return;
+    G.offers.push({ id: ++G.gid, tid: t.id, pid: p.id, get, v: +v.toFixed(1), w: Math.min(TRADE_DEADLINE, G.week + 2) });
+    news(G, `TRADE CALL: the ${t.nick} offer ${get.map(a => a.label.replace(/ \(via.*/, "")).join(" + ")} for ${p.pos} ${pname(p)}.`, "fa", t.id);
+  });
+  if (chance(.6)) { const star = pick(proPlayers(G).filter(p => p.ovr >= 86 && p.age >= 28 && !isUser(G, p.tid) && winPct(T(G, p.tid)) < .4).slice(0, 12)); if (star) news(G, `RUMOUR: the ${T(G, star.tid).nick} are listening on ${star.pos} ${pname(star)} as the deadline nears.`, "fa", star.tid); }
+}
+function acceptOffer(G, id){
+  const o = (G.offers || []).find(x => x.id === id), p = o && G.players[o.pid]; if (!o || !p || p.tid !== G.uid) return false;
+  const have = teamPicks(G, o.tid), get = o.get.map(a => have.find(b => b.rd === a.rd && b.orig === a.orig)).filter(Boolean); if (get.length !== o.get.length) { G.offers = G.offers.filter(x => x.id !== id); return false; }
+  doTrade(G, G.uid, o.tid, [{ p }], get); G.offers = G.offers.filter(x => x.id !== id && x.pid !== o.pid); return true;
+}
+
+/* ----------------------------- all-star game ----------------------------- */
+function allStarGame(G){
+  const A = G.awards.pro; if (!A || !A.pb || A.asg) return;
+  const str = c => avgOf(A.pb[c] || [], r => (G.players[r.pid] || { ovr: 80 }).ovr, 80), [c1, c2] = PRO_CONFS, d = (str(c1) - str(c2)) * .8;
+  let s1 = Math.max(3, round(gauss(27 + d, 8))), s2 = Math.max(3, round(gauss(27 - d, 8))); if (s1 === s2) s1 += 3;
+  const win = s1 > s2 ? c1 : c2, pool = (A.pb[win] || []).map(r => G.players[r.pid]).filter(p => p && ["QB", "RB", "WR", "TE", "DE", "LB", "CB"].includes(p.pos)), mvp = pool.length ? wpick(pool.map(p => [p, Math.pow(p.ovr / 80, 6) * (isOff(p.pos) ? 2 : 1)])) : null;
+  const line = !mvp ? "" : mvp.pos === "QB" ? `${rint(11, 19)}/${rint(20, 26)}, ${rint(160, 290)} yds, ${rint(2, 4)} TD` : mvp.pos === "RB" ? `${rint(8, 14)} car, ${rint(70, 140)} yds, ${rint(1, 2)} TD` : isOff(mvp.pos) ? `${rint(5, 9)} rec, ${rint(90, 170)} yds, ${rint(1, 3)} TD` : `${rint(4, 8)} tkl, ${rint(1, 3)} sck, ${rint(0, 1)} INT`;
+  A.asg = { sc: [s1, s2], confs: [c1, c2], mvp: mvp ? Object.assign(ref(G, mvp), { line }) : null };
+  if (mvp) { mvp.aw.push([G.year, "All-Star Game MVP"]); news(G, `The ${win} wins the all-star game ${Math.max(s1, s2)}–${Math.min(s1, s2)}. ${mvp.pos} ${pname(mvp)} is the MVP.`, "pro", mvp.tid); }
+}
+
+/* ----------------------------- combine board ----------------------------- */
+function combineBoard(G){
+  const ps = prospects(G).slice(0, 220).map(p => ({ p, c: combine(p) }));
+  const top = (k, asc, f) => ps.filter(x => !f || f(x.p)).slice().sort((a, b) => asc ? a.c[k] - b.c[k] : b.c[k] - a.c[k]).slice(0, 8);
+  return { forty: top("forty", true, p => !["OT", "OG", "C", "DT", "K", "P"].includes(p.pos)), bench: top("bench", false), vert: top("vert", false), cone: top("cone", true, p => p.pos !== "K" && p.pos !== "P"), bigFast: top("forty", true, p => ["OT", "OG", "C", "DT", "DE"].includes(p.pos)) };
+}
+
+/* ----------------------------- what if? ----------------------------- */
+// Replay the user's finished games many times with today's rosters. Changes nothing.
+function whatIf(G, n){
+  const games = [...G.cs, ...G.ps].filter(g => g.done && !g.post && (g.h === G.uid || g.a === G.uid)).sort((a, b) => a.w - b.w); if (!games.length) return null;
+  const wins = new Array(n).fill(0), rows = games.map(g => { const [H, A] = gameTeams(G, g), home = g.h === G.uid; let w = 0, pf = 0, pa = 0;
+    for (let k = 0; k < n; k++) { const r = simGame(G, H, A, { neutral: g.neutral, noInj: true, wx: g.wx || "", crowd: crowdOf(G, H), plan: [planOf(G, H), planOf(G, A)] }), me = r.sc[home ? 0 : 1], them = r.sc[home ? 1 : 0]; if (me > them) { w++; wins[k]++; } pf += me; pa += them; }
+    return { gid: g.id, w: g.w, opp: home ? A : H, home, won: (home ? g.hs : g.as) > (home ? g.as : g.hs), us: home ? g.hs : g.as, them: home ? g.as : g.hs, p: w / n, pf: pf / n, pa: pa / n }; });
+  const dist = new Array(games.length + 1).fill(0); wins.forEach(w => dist[w]++);
+  const actual = rows.filter(r => r.won).length, exp = sum(rows, r => r.p);
+  return { n, rows, dist, actual, exp, better: wins.filter(w => w > actual).length / n, worse: wins.filter(w => w < actual).length / n, perfect: dist[games.length] / n };
+}
+
+/* ----------------------------- greatest teams ----------------------------- */
+function greatestTeams(G, pro, n){
+  const rows = []; (pro ? G.pro : G.col).forEach(t => t.hist.forEach(h => { const g = Math.max(1, h.w + h.l), champ = /National Champions|Won Pocket Bowl/.test(h.post || ""), ru = /runner-up|Lost Pocket Bowl/.test(h.post || "");
+    rows.push({ t, h, champ, s: h.w / g * 50 + ((h.pf || 0) - (h.pa || 0)) / g * 1.1 + (champ ? 22 : ru ? 8 : 0) + (h.cc ? 4 : 0) + (h.rk ? (26 - h.rk) * .5 : 0) + (!pro ? (t.prestige - 60) * .05 : 0) }); }));
+  return rows.sort((a, b) => b.s - a.s).slice(0, n || 25);
 }
 
 /* ===== 06-events.js ===== */
@@ -1427,7 +1642,7 @@ const EV = {
     title: () => "Contract year", body: (G, c) => `${pname(P_(G, c))} is in the last year of his deal and his agent is going public. He wants an extension before he takes another snap.`,
     opts: [{ l: "Extend him now", d: "+3 years at a 12% raise", fx: (G, c) => { const p = P_(G, c); p.c = { amt: +(askOf(G, p) * 1.12).toFixed(2), yrs: 4 }; moraleUp(G, .8); story(G, p, "Signed a contract extension after a public standoff."); p.tx.push([G.year, `Signed an extension with the ${userTeam(G).nick}`]); return `Done: 4 years, ${money(p.c.amt)} per.`; } },
       { l: "Hold firm until the offseason", d: "He might sit", fx: (G, c) => { const p = P_(G, c); if (chance(.4)) { p.inj = 2; story(G, p, "Sat out two games in a contract dispute."); return "He 'tweaks a hamstring.' Two weeks."; } bump(G, p, 1); story(G, p, "Played through a contract dispute with a chip on his shoulder."); return "He plays angry. It's working (+1)."; } }] },
-  rookiewall: { mode: "pro", when: G => { const p = someStarter(G, p => p.exp === 0); return p && G.week >= 9 ? { pid: p.id } : null; },
+  rookiewall: { mode: "pro", when: G => { const p = someStarter(G, p => isRookie(G, p)); return p && G.week >= 9 ? { pid: p.id } : null; },
     title: () => "The rookie wall", body: (G, c) => `${pname(P_(G, c))} has never played this many games in a season. The tape shows tired legs.`,
     opts: [{ l: "Cut his practice reps", d: "He finishes strong", fx: (G, c) => { bump(G, P_(G, c), 1); story(G, P_(G, c), "Pushed through the rookie wall."); return "Fresh legs in December (+1)."; } },
       { l: "Pair him with a veteran for the stretch run", d: "+potential", fx: (G, c) => { P_(G, c).pot = clamp(P_(G, c).pot + 2, P_(G, c).ovr, 99); return "He learns how pros take care of their bodies (+2 potential)."; } }] },
@@ -1455,8 +1670,11 @@ function chooseEvent(G, id, i){
   const ev = G.events.find(e => e.id === id); if (!ev || ev.done) return;
   if (ev.key === "job") {
     const jobs = ev.ctx.jobs;
-    if (i < jobs.length) { const old = userTeam(G), nt = T(G, jobs[i]); old.coach = makeCoach(G, 34 + old.prestige * .5); old.coach.since = G.year + 1; G.uid = nt.id; nt.coach = { name: G.coach.name, age: 45, ovr: 70, w: 0, l: 0, ch: 0, aw: [], since: G.year + 1 }; G.pitches = {}; ev.result = `You're the new head coach at ${nt.name}.`; news(G, `${G.coach.name} leaves ${old.name} to take over at ${nt.name}.`, "coach", nt.id); }
-    else { gainLP(G, 4, "loyalty"); ev.result = "You're staying. The administration announces a contract extension."; }
+    if (i < jobs.length) { const nt = takeJob(G, jobs[i]); ev.result = nt.pro ? `You're the new general manager of the ${nt.city} ${nt.nick}.` : `You're the new head coach at ${nt.name}.`; }
+    else { gainLP(G, 4, "loyalty"); G.coach.sec = clamp((G.coach.sec || 60) + 8, 0, 100); ev.result = "You're staying. The administration announces a contract extension."; }
+    delete G.coach.fired;
+  } else if (ev.key === "realign") {
+    const t = userTeam(G); if (i === 0) { moveConf(G, t, ev.ctx.to); t.prestige = clamp(t.prestige + 2, 0, 99); ev.result = `${t.name} joins the ${G.confs[ev.ctx.to].name} next season.`; } else ev.result = "You're staying where you are.";
   } else ev.result = EV[ev.key].opts[i].fx(G, ev.ctx);
   ev.done = true; ev.pick = i;
 }
@@ -1544,7 +1762,7 @@ async function saveGame(G){
 async function loadSlot(id){ const raw = await idb("readonly", s => s.get(slotKey(id))); if (!raw) return null; const G = typeof raw === "string" ? JSON.parse(raw) : raw; return migrate(G); }
 async function deleteSlot(id){ try { await idb("readwrite", s => s.delete(slotKey(id))); } catch (e) {} localStorage.setItem(SLOTS_KEY, JSON.stringify(listSlots().filter(s => s.id !== id))); }
 // Add fields that older saves lack here, rather than changing the keys.
-function migrate(G){ G.perks = G.perks || {}; if (G.ivLeft == null) G.ivLeft = 12; G.scouted = G.scouted || {}; G.pickOwn = G.pickOwn || {}; G.dc = G.dc || {}; G.pending = G.pending || []; G.events = G.events || []; G._pbp = {}; try { backfillVotes(G); } catch (e) {} return G; }
+function migrate(G){ G.perks = G.perks || {}; if (G.ivLeft == null) G.ivLeft = 12; G.scouted = G.scouted || {}; G.pickOwn = G.pickOwn || {}; G.dc = G.dc || {}; G.pending = G.pending || []; G.events = G.events || []; G._pbp = {}; G.fac = G.fac || {}; if (G.coach && G.coach.sec == null) G.coach.sec = 62; try { backfillVotes(G); redoRookies(G); ensureStaff(G); if (G.awards && G.awards.pro) allStarGame(G); if (G.mode === "college" && G.phase === "off" && !G.nil) nilReset(G); } catch (e) {} return G; }
 
 /* ===== 08-ui-base.js ===== */
 
@@ -1858,7 +2076,7 @@ function PlayerPage({ pid, onClose }){
           </Card>
           <Card title="Career arc" right="rating by age · ★ = major award">
             <CareerArc p={p} color={brightOf(tc)} />
-            <div className="grid grid-cols-2 gap-2 mt-2 text-xs"><div className="bg-white/5 rounded-lg p-2"><div className="text-slate-400 text-[10px]">Character</div><div className="font-bold">{p.chr >= 80 ? "Leader" : p.chr >= 60 ? "Solid" : p.chr >= 40 ? "Average" : "Question marks"}</div></div><div className="bg-white/5 rounded-lg p-2"><div className="text-slate-400 text-[10px]">{pro ? "Experience" : "Enrolled"}</div><div className="font-bold">{pro ? (p.exp ? p.exp + " yr" : "Rookie") : p.enr || "—"}</div></div></div>
+            <div className="grid grid-cols-2 gap-2 mt-2 text-xs"><div className="bg-white/5 rounded-lg p-2"><div className="text-slate-400 text-[10px]">Character</div><div className="font-bold">{p.chr >= 80 ? "Leader" : p.chr >= 60 ? "Solid" : p.chr >= 40 ? "Average" : "Question marks"}</div></div><div className="bg-white/5 rounded-lg p-2"><div className="text-slate-400 text-[10px]">{pro ? "Experience" : "Enrolled"}</div><div className="font-bold">{pro ? (isRookie(G, p) ? "Rookie" : (p.exp || 1) + " yr") : p.enr || "—"}</div></div></div>
           </Card>
         </div>
 

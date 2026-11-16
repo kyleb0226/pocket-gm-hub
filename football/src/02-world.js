@@ -149,7 +149,7 @@ function newGame(o = {}){
 // Everything the sim needs to know about one side, built fresh for each game.
 function depthChart(G, tid){
   const d = {}; POS.forEach(k => (d[k] = []));
-  rosterOf(G, tid).forEach(p => d[p.pos].push(p));
+  rosterOf(G, tid).forEach(p => { if (p.rs !== G.year || G.phase === "off") d[p.pos].push(p); });
   POS.forEach(k => d[k].sort((a, b) => (a.inj ? 1 : 0) - (b.inj ? 1 : 0) || b.ovr - a.ovr));
   if (G.dc && tid === G.uid) POS.forEach(k => { const o = G.dc[k]; if (!o) return; const r = p => { const i = o.indexOf(p.id); return i < 0 ? 99 : i; }; d[k].sort((a, b) => (a.inj ? 1 : 0) - (b.inj ? 1 : 0) || r(a) - r(b) || b.ovr - a.ovr); });
   return d;
@@ -159,14 +159,15 @@ function lineup(G, t, edge){
   const d = depthChart(G, t.id), ok = (pos, n) => d[pos].filter(p => !p.inj).slice(0, n);
   const ol = [...ok("OT", 2), ...ok("OG", 2), ...ok("C", 1)], dl = [...ok("DE", 2), ...ok("DT", 2)], lb = ok("LB", 3), cb = ok("CB", 3), s = ok("S", 2);
   const qb = ok("QB", 1)[0], rbs = ok("RB", 2), wrs = ok("WR", 4), te = ok("TE", 1)[0];
-  const m = (t.morale || 0) * .5 + (t.coach ? (t.coach.ovr - 60) * .05 : 0) + (edge || 0) + (isUser(G, t.id) ? (G.perks.gp || 0) * .5 : 0);
+  const me = isUser(G, t.id), sf = me && G.staff ? G.staff : null, m0 = (t.morale || 0) * .5 + (t.coach ? (t.coach.ovr - 60) * .05 : 0) + (edge || 0) + (me ? (G.perks.gp || 0) * .5 + (edge ? ((G.fac || {}).stad || 0) * .2 : 0) : 0);
+  const m = m0 + (sf && sf.oc ? (sf.oc.ovr - 70) * .05 : 0), md = m0 + (sf && sf.dc ? (sf.dc.ovr - 70) * .05 : 0);
   const recv = avgOf([...wrs.slice(0, 3), te].filter(Boolean), p => p.ovr), pblk = avgOf(ol, p => p.r[0]), rblk = avgOf(ol, p => p.r[1]);
   const rush = (avgOf(dl, p => p.r[0]) * 4 + avgOf(lb, p => p.r[2])) / 5, cover = (avgOf(cb, p => p.ovr) * 3 + avgOf(s, p => p.ovr) * 2 + avgOf(lb, p => p.r[1])) / 6;
   const w3 = p => Math.pow(p.ovr / 70, 2);
   const c = {
     t, qb, k: ok("K", 1)[0], p: ok("P", 1)[0], ol,
     passOff: .42 * (qb ? qb.ovr : 45) + .3 * recv + .28 * pblk + m, runOff: .5 * avgOf(rbs.slice(0, 1), p => p.ovr) + .5 * rblk + m,
-    passDef: .62 * cover + .38 * rush + m, runDef: .55 * avgOf(dl, p => p.r[1]) + .45 * avgOf(lb, p => p.r[0]) + m, rush: rush + m, cover: cover + m, pblk: pblk + m,
+    passDef: .62 * cover + .38 * rush + md, runDef: .55 * avgOf(dl, p => p.r[1]) + .45 * avgOf(lb, p => p.r[0]) + md, rush: rush + md, cover: cover + md, pblk: pblk + m,
     targets: [...wrs.map((p, i) => [p, [26, 21, 15, 5][i] * w3(p)]), ...(te ? [[te, 17 * w3(te)]] : []), ...rbs.map((p, i) => [p, [11, 5][i] * w3(p)])],
     backs: rbs.map((p, i) => [p, [60, 40][i] * w3(p)]),
     rushers: [...dl.map(p => [p, (p.pos === "DE" ? 3 : 1.6) * Math.pow(p.r[0] / 70, 4)]), ...lb.map(p => [p, Math.pow(p.r[2] / 70, 4)])],
@@ -188,46 +189,51 @@ function simGame(G, H, A, o = {}){
   const L = {}, add = (p, k, v = 1) => { if (!p) return; const l = L[p.id] || (L[p.id] = {}); l[k] = (l[k] || 0) + v; };
   const sc = [0, 0], q = [[0, 0, 0, 0, 0], [0, 0, 0, 0, 0]], smry = [], flow = [[0, 0]], pbp = o.pbp ? [] : null;
   const tot = [{ pl: 0, yd: 0, py: 0, ry: 0, to: 0, fd: 0 }, { pl: 0, yd: 0, py: 0, ry: 0, to: 0, fd: 0 }];
-  let clock = 0, ot = 0;
+  let clock = 0, ot = 0, asked = 0;
+  const PL = o.plan || [{}, {}], wx = o.wx || "", WX = { rain: [.03, .03, 1.6, .03], wind: [.02, .08, 1, .04], snow: [.045, .05, 1.5, .06] }[wx] || [0, 0, 1, 0], crowd = o.neutral ? 0 : (o.crowd || 0), calls = o.calls || [];
+  // A decision only the user can make: answer from the list, or stop the sim and ask.
+  const ask = info => { if (calls.length) return calls.shift(); if (o.ask && asked < 6) { asked++; throw { _need: Object.assign(info, { sc: sc.slice(), clock, last: pbp ? pbp.slice(-4).map(x => x[3]) : [] }) }; } return null; };
   const nm = p => p ? p.fn[0] + ". " + p.ln : "Team";
   const score = (i, pts, txt) => { sc[i] += pts; q[i][Math.min(4, Math.floor(clock / 900))] += pts; smry.push([Math.min(5, Math.floor(clock / 900) + 1), i, txt, sc[0], sc[1]]); flow.push([Math.min(clock, 3600 + ot * 60), sc[0] - sc[1]]); };
   const log = (i, y, txt, kind) => { if (pbp) pbp.push([clock, i, clamp(round(y), 0, 100), txt, sc[0], sc[1], kind || ""]); };
-  const xp = (i, O) => { add(O.k, "xpa"); if (chance(clamp(.95 + ((O.k ? O.k.r[1] : 60) - 70) * .002, .85, .995))) { add(O.k, "xpm"); sc[i]++; q[i][Math.min(4, Math.floor(clock / 900))]++; const s = smry[smry.length - 1]; s[3] = sc[0]; s[4] = sc[1]; flow[flow.length - 1][1] = sc[0] - sc[1]; } };
+  const two = (i, O, D) => { const good = chance(clamp(.47 + (O.passOff - D.passDef) * .004, .3, .62)); if (good) { sc[i] += 2; q[i][Math.min(4, Math.floor(clock / 900))] += 2; const s = smry[smry.length - 1]; s[2] += " (two-point try good)"; s[3] = sc[0]; s[4] = sc[1]; flow[flow.length - 1][1] = sc[0] - sc[1]; } else smry[smry.length - 1][2] += " (two-point try failed)"; log(i, 98, "Two-point try " + (good ? "is GOOD" : "fails"), good ? "td" : "to"); };
+  const xp = (i, O) => { const d = sc[i] - sc[1 - i]; if (o.user === i && clock > 2400 && (d === -2 || d === -5 || d === -8 || d === 1 || d === -10) && ask({ type: "2pt", i }) === "two") return two(i, O, cx[1 - i]); if (o.user !== i && clock > 3000 && (d === -2 || d === -5)) return two(i, O, cx[1 - i]); add(O.k, "xpa"); if (chance(clamp(.95 + ((O.k ? O.k.r[1] : 60) - 70) * .002, .85, .995))) { add(O.k, "xpm"); sc[i]++; q[i][Math.min(4, Math.floor(clock / 900))]++; const s = smry[smry.length - 1]; s[3] = sc[0]; s[4] = sc[1]; flow[flow.length - 1][1] = sc[0] - sc[1]; } };
 
   function drive(i, start, limit){
-    const O = cx[i], D = cx[1 - i]; let y = start, down = 1, togo = 10;
+    const O = cx[i], D = cx[1 - i], pl = PL[i] || {}, bl = (PL[1 - i] || {}).blitz || 0; let y = start, down = 1, togo = 10;
+    const punt = () => { const P = O.p, dist = round(gauss(41 + ((P ? P.r[0] : 60) - 70) * .18 - (wx === "wind" ? 3 : 0), 5)); add(P, "pu"); add(P, "puy", Math.min(dist, 100 - y)); clock += 8; const land = y + dist; log(i, y, nm(P) + " punts " + Math.min(dist, 100 - y) + " yards", "punt"); return { end: "punt", next: land >= 100 ? 20 : clamp(100 - land + rint(0, 12), 1, 99) }; };
     for (;;) {
       const late = clock > 2700, diff = sc[i] - sc[1 - i], fgDist = 100 - y + 17;
       if (clock >= limit) { if (fgDist <= 50 && limit < 9e8) return tryFG(i, O, y, fgDist); return { end: "clock", y }; }
       if (down === 4) {
         const mustGo = late && diff < 0 && (clock > 3300 || diff < -8) && !(diff >= -3 && fgDist <= 52);
-        if (!mustGo) {
+        const call = o.user === i && ((togo <= 5 && y >= 38) || (late && diff < 0 && diff >= -16)) ? ask({ type: "4th", i, y, togo, fgDist, canFG: fgDist <= 58 }) : null;
+        if (call === "fg") return tryFG(i, O, y, fgDist);
+        if (call === "punt") return punt();
+        if (!mustGo && call !== "go") {
           if (fgDist <= 54 && !(togo <= 1 && y >= 97)) return tryFG(i, O, y, fgDist);
-          if (!(togo <= 2 && y >= 50 && chance(.55))) {
-            const P = O.p, dist = round(gauss(41 + ((P ? P.r[0] : 60) - 70) * .18, 5)); add(P, "pu"); add(P, "puy", Math.min(dist, 100 - y)); clock += 8;
-            const land = y + dist; log(i, y, nm(P) + " punts " + Math.min(dist, 100 - y) + " yards", "punt");
-            return { end: "punt", next: land >= 100 ? 20 : clamp(100 - land + rint(0, 12), 1, 99) };
-          }
+          if (!(togo <= 2 + (pl.fourth || 0) && y >= 50 - (pl.fourth || 0) * 8 && chance(.55 + (pl.fourth || 0) * .3))) return punt();
         }
       }
-      let pPass = .56 + (togo > 7 && down > 1 ? .17 : 0) - (togo <= 2 ? .2 : 0) + (O.passOff - O.runOff) * .004;
+      if (crowd && i === 1 && chance(crowd * .012)) { const back = Math.min(5, y - 1); y -= back; togo += back; log(i, y, "False start — the crowd is deafening", ""); }
+      let pPass = .56 + (togo > 7 && down > 1 ? .17 : 0) - (togo <= 2 ? .2 : 0) + (O.passOff - O.runOff) * .004 + (pl.pass || 0) * .09 - WX[3];
       if (late) pPass += diff > 0 ? -.2 : diff < 0 ? .15 : 0;
       tot[i].pl++;
       let gain = 0, to = false, td = false, inc = false, txt = ""; const qb = O.qb;
       if (chance(clamp(pPass, .15, .9))) {
-        if (chance(clamp(.054 + (D.rush - O.pblk) * .0026, .02, .15))) {
+        if (chance(clamp(.054 + (D.rush - O.pblk) * .0026 + bl * .014, .02, .17))) {
           gain = -rint(3, 10); const d = wpick(D.rushers); add(qb, "sk"); add(d, "sck"); add(d, "tk"); add(d, "tfl"); add(pick(O.ol), "sal");
-          txt = nm(qb) + " sacked by " + nm(d) + " for " + gain; if (chance(.07)) { to = true; add(d, "ff"); add(qb, "fum"); txt += ", FUMBLE — defense recovers"; }
+          txt = nm(qb) + " sacked by " + nm(d) + " for " + gain; if (chance(.07 * WX[2])) { to = true; add(d, "ff"); add(qb, "fum"); txt += ", FUMBLE — defense recovers"; }
         } else if (qb && chance(clamp((qb.r[3] - 52) * .0025, 0, .11))) {
           gain = clamp(round(gauss(6.5, 5)), -2, 100 - y); add(qb, "ra"); add(qb, "ry", gain); tot[i].ry += gain; txt = nm(qb) + " scrambles for " + gain;
           if (y + gain >= 100) { td = true; add(qb, "rtd"); } else add(wpick(D.passTk), "tk");
         } else {
           const tgt = wpick(O.targets); add(qb, "pa"); add(tgt, "tg");
-          if (chance(clamp(.025 + (D.cover - (qb ? qb.r[1] : 50)) * .0009, .008, .055))) {
+          if (chance(clamp(.025 + (D.cover - (qb ? qb.r[1] : 50)) * .0009 + bl * .003, .008, .06))) {
             to = true; const d = wpick(D.dbs); add(d, "int"); add(d, "pd"); add(qb, "pi"); txt = nm(qb) + " pass INTERCEPTED by " + nm(d);
             if (chance(.05)) { add(d, "dtd"); clock += 12; tot[i].to++; score(1 - i, 6, nm(d) + " interception return TD"); xp(1 - i, D); log(1 - i, 100, txt + " — returned for a TOUCHDOWN", "td"); return { end: "td" }; }
-          } else if (chance(clamp(.635 + (O.passOff - D.passDef) * .0075, .38, .82))) {
-            let g = round(2 + -Math.log(1 - _rng()) * (9.9 + (O.passOff - D.passDef) * .07)); if (tgt && tgt.pos === "RB") g = round(g * .65);
+          } else if (chance(clamp(.635 + (O.passOff - D.passDef) * .0075 - WX[0] - bl * .02, .36, .82))) {
+            let g = round(2 + -Math.log(1 - _rng()) * (9.9 + (O.passOff - D.passDef) * .07) * (1 + bl * .13)); if (tgt && tgt.pos === "RB") g = round(g * .65);
             gain = Math.min(g, 100 - y); add(qb, "pc"); add(qb, "py", gain); add(tgt, "rec"); add(tgt, "rcy", gain); tot[i].py += gain; txt = nm(qb) + " pass to " + nm(tgt) + " for " + gain;
             if (y + gain >= 100) { td = true; add(qb, "ptd"); add(tgt, "rctd"); } else add(wpick(D.passTk), "tk");
           } else { inc = true; txt = nm(qb) + " pass incomplete to " + nm(tgt); if (chance(.3)) add(wpick(D.dbs), "pd"); }
@@ -236,9 +242,9 @@ function simGame(G, H, A, o = {}){
         const car = wpick(O.backs) || qb; let g = round(gauss(3.7 + (O.runOff - D.runDef) * .075, 4.2)); if (chance(.03)) g += rint(10, 50);
         gain = clamp(g, -5, 100 - y); add(car, "ra"); add(car, "ry", gain); tot[i].ry += gain; if (gain >= 5 && chance(.5)) add(pick(O.ol), "pk"); txt = nm(car) + " runs for " + gain;
         if (y + gain >= 100) { td = true; add(car, "rtd"); }
-        else { const d = wpick(D.runTk); add(d, "tk"); if (gain < 0) add(d, "tfl"); if (chance(.011)) { to = true; add(car, "fum"); add(d, "ff"); txt += ", FUMBLE — defense recovers"; } }
+        else { const d = wpick(D.runTk); add(d, "tk"); if (gain < 0) add(d, "tfl"); if (chance(.011 * WX[2])) { to = true; add(car, "fum"); add(d, "ff"); txt += ", FUMBLE — defense recovers"; } }
       }
-      clock += inc ? 7 : (late && diff > 0 ? 37 : late && diff < 0 ? 24 : 31);
+      clock += inc ? 7 : (late && diff > 0 ? 37 : late && diff < 0 ? 24 : 31 - round((pl.tempo || 0) * 5));
       y += gain; tot[i].yd += gain;
       if (td) { score(i, 6, txt.replace(/^(\S+ \S+) (pass to|runs for|scrambles for)/, "$1 $2").replace(" for " + gain, " " + gain + " yd") + " TD"); xp(i, O); log(i, 100, txt + " — TOUCHDOWN", "td"); return { end: "td" }; }
       if (to) { tot[i].to++; log(i, y, txt, "to"); return { end: "to", y: clamp(y, 1, 99) }; }
@@ -249,7 +255,7 @@ function simGame(G, H, A, o = {}){
   }
   function tryFG(i, O, y, dist){
     const k = O.k; add(k, "fga"); clock += 5;
-    if (chance(clamp(1.22 - dist * .0125 + ((k ? k.r[1] : 60) - 70) * .004, .2, .99))) { add(k, "fgm"); if (k) { const l = L[k.id]; l.fgl = Math.max(l.fglMax || 0, dist); l.fglMax = l.fgl; } score(i, 3, nm(k) + " " + dist + " yd field goal"); log(i, y, nm(k) + " " + dist + "-yard field goal is GOOD", "fg"); return { end: "fg" }; }
+    if (chance(clamp(1.22 - dist * .0125 + ((k ? k.r[1] : 60) - 70) * .004 - WX[1] * (dist > 30 ? 1 : .4), .15, .99))) { add(k, "fgm"); if (k) { const l = L[k.id]; l.fgl = Math.max(l.fglMax || 0, dist); l.fglMax = l.fgl; } score(i, 3, nm(k) + " " + dist + " yd field goal"); log(i, y, nm(k) + " " + dist + "-yard field goal is GOOD", "fg"); return { end: "fg" }; }
     log(i, y, nm(k) + " " + dist + "-yard field goal is no good", "to"); return { end: "fgmiss", y: clamp(y, 1, 99) };
   }
   const next = r => r.end === "td" || r.end === "fg" ? 25 : r.end === "safety" ? 35 : r.end === "punt" ? r.next : r.end === "clock" ? 25 : 100 - r.y;
@@ -307,7 +313,7 @@ function applyGame(G, g, r, o = {}){
   g.top = lines.map(a => a.slice(0, 3).map(x => [x[0], lineText(x[2])]));
   if (o.keepBox) g.box = lines.map(a => a.map(x => [x[0], x[2]]));
   const best = lines[0].concat(lines[1]).sort((x, y) => y[1] - x[1])[0]; if (best) g.potg = best[0];
-  r.hurt.forEach(([p, wks]) => { if (p.inj) return; p.inj = wks; p.st.gm = p.st.gm || 0; if (wks >= 10) p.bigInj = G.year; if (isUser(G, p.tid)) news(G, `${p.pos} ${pname(p)} is hurt and will miss ${wks >= 10 ? "the rest of the season" : wks + " week" + (wks > 1 ? "s" : "")}.`, "inj", p.tid); });
+  r.hurt.forEach(([p, wks]) => { if (p.inj) return; if (isUser(G, p.tid) && G.fac && G.fac.med) wks = Math.max(1, round(wks * (1 - .1 * G.fac.med))); p.inj = wks; p.st.gm = p.st.gm || 0; if (wks >= 10) p.bigInj = G.year; if (isUser(G, p.tid)) news(G, `${p.pos} ${pname(p)} is hurt and will miss ${wks >= 10 ? "the rest of the season" : wks + " week" + (wks > 1 ? "s" : "")}.`, "inj", p.tid); });
   if (r.pbp) (G._pbp || (G._pbp = {}))[g.id] = r.pbp;
   if (!H.pro && !o.post) lines.forEach((a, i) => a.slice(0, 2).forEach(x => (G._wk || (G._wk = [])).push([x[0], x[1], lineText(x[2])])));
   if (isUser(G, H.id) || isUser(G, A.id) || o.keepBox) g.flow = r.flow;

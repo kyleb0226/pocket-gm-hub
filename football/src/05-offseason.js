@@ -36,8 +36,9 @@ function beginOffseason(G){
     else { t.coach = makeCoach(G, 34 + t.prestige * .5); t.coach.since = G.year + 1; if (t.prestige >= 70) news(G, `${t.name} fires ${old.name} and hires ${t.coach.name}.`, "coach", t.id); }
   });
   G.openJobs = fired.filter(t => !isUser(G, t.id)).map(t => t.id);
-  G.pro.forEach(t => { if (isUser(G, t.id)) return; const h = t.hist.slice(-2); t.coach.age++; if (h.length === 2 && h.every(r => r.w <= 5) && G.year - t.coach.since >= 1) { const old = t.coach; t.coach = makeCoach(G, 68); t.coach.since = G.year + 1; news(G, `The ${t.nick} fire ${old.name}; ${t.coach.name} takes over.`, "coach", t.id); } });
-  if (G.mode === "college") jobOffers(G);
+  G.openPro = [];
+  G.pro.forEach(t => { if (isUser(G, t.id)) return; const h = t.hist.slice(-2); t.coach.age++; if (h.length === 2 && h.every(r => r.w <= 5) && G.year - t.coach.since >= 1) { const old = t.coach; G.openPro.push(t.id); t.coach = makeCoach(G, 68); t.coach.since = G.year + 1; news(G, `The ${t.nick} fire ${old.name}; ${t.coach.name} takes over.`, "coach", t.id); } });
+  jobReview(G); staffOffseason(G); realignment(G);
   // --- pro: retirements and expiring deals ---
   proPlayers(G).concat(Object.values(G.players).filter(p => p.fa)).forEach(p => {
     const old = p.age >= 38 || (p.age >= 35 && chance(.5)) || (p.age >= 31 && p.ovr < 72 && chance(.45)) || (p.fa && (p.age >= 29 || p.ovr < 64));
@@ -48,7 +49,7 @@ function beginOffseason(G){
   const pool = [];
   colPlayers(G).forEach(p => {
     const t = T(G, p.tid), dv = draftValue(p), early = p.cls === 2 && !p.stay && (dv >= 79 || (dv >= 75 && chance(.5)));
-    if (p.cls === 3 || early) { p.dcl = G.year; p.tx.push([G.year, early ? `Declared early for the draft (${t.name})` : `Finished his eligibility at ${t.name}`]); leaveCollege(G, p); p.tid = null; pool.push(p);
+    if ((p.cls === 3 && p.rs !== G.year) || early) { p.dcl = G.year; p.tx.push([G.year, early ? `Declared early for the draft (${t.name})` : `Finished his eligibility at ${t.name}`]); leaveCollege(G, p); p.tid = null; pool.push(p);
       if (early && (isUser(G, t.id) || dv >= 84)) news(G, `${t.name} ${p.pos} ${pname(p)} declares for the draft.`, "draft", t.id); }
   });
   G._ros = null;
@@ -65,7 +66,8 @@ function beginOffseason(G){
     if ((buried && chance(.3)) || (big && chance(.35)) || chance(.012)) { p.portal = 1; G.portal.push(p.id); } }));
   });
   genRecruits(G);
-  G.pitchLeft = 15 + (G.bonusPitch || 0); G.bonusPitch = 0; G.pitches = {};
+  G.pitchLeft = 15 + (G.bonusPitch || 0) + staffBonus(G, "rc"); G.bonusPitch = 0; G.pitches = {}; nilReset(G);
+  if (G.mode === "pro") G.ivLeft += staffBonus(G, "sc") * 2 + ((G.fac || {}).recruit || 0) * 3;
   news(G, `The ${G.year} season is in the books. ${G.draft.pool.length} prospects are in the draft pool, ${G.portal.length} players have entered the transfer portal, and ${G.rec.length} recruits are waiting on Signing Day.`, "off");
 }
 
@@ -164,7 +166,7 @@ function genRecruits(G){
   G.rec.forEach((id, i) => (G.players[id].rk = i + 1));
 }
 const homeBonus = (p, t) => { const st = p.home.slice(-2); return st === t.state ? 9 : REGION[st] && REGION[st] === REGION[t.state] ? 4 : 0; };
-function schoolPull(G, p, t, noise){ return t.prestige + homeBonus(p, t) + (noise ? gauss(0, 9) : 0) + (isUser(G, t.id) ? (G.pitches[p.id] || 0) * (G.scouted[p.id] ? 11 : 9) + (G.perks.rec || 0) * 2 : 0) + prioBonus(p, t) + (t.coach.ovr - 60) * .08; }
+function schoolPull(G, p, t, noise){ return t.prestige + homeBonus(p, t) + (noise ? gauss(0, 9) : 0) + (isUser(G, t.id) ? (G.pitches[p.id] || 0) * (G.scouted[p.id] ? 11 : 9) + (G.perks.rec || 0) * 2 + nilPull(p, G.nil && G.nil.deals[p.id]) + ((G.fac || {}).recruit || 0) : 0) + prioBonus(p, t) + (t.coach.ovr - 60) * .08; }
 // The three schools most likely to land a recruit, as things stand (no luck applied).
 function recruitLeaders(G, p){
   const open = G.col.filter(t => t.id !== p.tid && rosterOf(G, t.id).filter(x => x.pos === p.pos && !x.portal).length + (G._signed && G._signed[t.id + p.pos] || 0) < COL_NEED[p.pos] + (p.portal ? 1 : 0));
@@ -203,14 +205,15 @@ function progression(G){
   for (const id in G.players) {
     const p = G.players[id]; if (p.ret) continue; if (p.tid == null && !p.fa) continue;
     p.age++; let d;
-    if (p.tid != null && p.tid >= 100) { const t = T(G, p.tid); d = gauss((p.pot - p.ovr) * .3 + .9 + (t.coach.ovr - 60) * .015 + (isUser(G, t.id) ? (G.perks.dev || 0) * .3 : 0), 2); d = clamp(d, -1, 9); p.cls = Math.min(3, (p.cls || 0) + (p.enr === G.year + 1 ? 0 : 1)); }
-    else { p.exp = (p.exp || 0) + 1; d = p.age <= 25 ? gauss((p.pot - p.ovr) * .3 + .4, 1.8) : p.age <= 29 ? gauss(0, 1.2) : p.age <= 32 ? gauss(-1.2, 1.5) : gauss(-2.6, 1.6); }
+    if (p.tid != null && p.tid >= 100) { const t = T(G, p.tid); d = gauss((p.pot - p.ovr) * .3 + .9 + (t.coach.ovr - 60) * .015 + (isUser(G, t.id) ? (G.perks.dev || 0) * .3 + ((G.fac || {}).train || 0) * .22 : 0), 2); d = clamp(d, -1, 9); if (p.rs === G.year) p.rsd = 1; p.cls = Math.min(3, (p.cls || 0) + (p.enr === G.year + 1 || p.rs === G.year ? 0 : 1)); }
+    else { p.exp = (p.exp || 0) + 1; d = p.age <= 25 ? gauss((p.pot - p.ovr) * .3 + .4 + (isUser(G, p.tid) ? ((G.fac || {}).train || 0) * .18 : 0), 1.8) : p.age <= 29 ? gauss(0, 1.2) : p.age <= 32 ? gauss(-1.2, 1.5) : gauss(-2.6, 1.6); }
     tweakRatings(p, round(d + (p.age <= 26 ? (trait(p, "we") - 3) * .3 : 0))); p.ovh.push([G.year + 1, p.ovr]); if (p.ovh.length > 22) p.ovh.shift();
   }
 }
 
 function advanceOff(G){
-  const s = G.offStep; expireEvents(G, true);
+  const s = G.offStep; if (G.coach.fired) { const ev = G.events.find(e => e.key === "job" && !e.done); if (ev) chooseEvent(G, ev.id, 0); delete G.coach.fired; }
+  expireEvents(G, true);
   if (s === 0) { if (G.mode !== "pro") aiResign(G); }
   else if (s === 1) { aiResign(G); if (G.mode !== "pro") aiFreeAgency(G); }
   else if (s === 2) { aiFreeAgency(G); aiTrades(G, 3); draftRun(G, false); }

@@ -58,6 +58,20 @@ function voteAward(G, A, name, cands, n, win){
   v.slice(0, 5).forEach((x, i) => (x.p.av || (x.p.av = [])).push([G.year, name, i + 1, x.pts]));
   return v[0].p;
 }
+// A first-year pro. Drafted players have already had exp bumped to 1 by the time their first season
+// kicks off, so experience alone misses them: go by draft year (or the undrafted note).
+const isRookie = (G, p) => p.exp != null && (p.exp === 0 || !!(p.draft && p.draft.y === G.year) || p.tx.some(x => x[0] === G.year && /Went undrafted/.test(x[1])));
+// One-time repair for saves whose rookie awards were handed out under the old rule: re-run both
+// Rookie of the Year votes and the All-Rookie team on the season so far.
+function redoRookies(G){
+  const P = G.awards && G.awards.pro; if (!P || P.rkFix) return false;
+  const names = ["Offensive Rookie of the Year", "Defensive Rookie of the Year"], all = proPlayers(G).filter(p => (p.st.g || 0) >= 6), h = seasonHist(G);
+  for (const id in G.players) { const p = G.players[id]; if (p.aw && p.aw.length) p.aw = p.aw.filter(a => !(a[0] === G.year && (names.includes(a[1]) || a[1] === "All-Rookie Team"))); if (p.av) p.av = p.av.filter(a => !(a[0] === G.year && names.includes(a[1]))); }
+  P.list = P.list.filter(x => !names.includes(x.a)); P.votes = P.votes || {};
+  proVoted(G, all).filter(v => names.includes(v[0])).forEach(([name, pool, f, note], k) => { delete P.votes[name]; const w = voteAward(G, P, name, pool.map(p => [p, f(p)]), 50); if (!w) return; w.aw.push([G.year, name]); P.list.splice(Math.min(P.list.length, 3 + k), 0, Object.assign({ a: name, note }, ref(G, w)));
+    news(G, `Late ballots are in: ${w.pos} ${pname(w)} of the ${T(G, w.tid).nick} is the ${name}.`, "award", w.tid); });
+  allRookie(G, P, all); h.proAwards = P.list; return true;
+}
 // The awards that are decided by a vote: [name, candidate pool, score, note].
 function colVoted(G, all){
   const tf = p => .72 + .4 * winPct(T(G, p.tid));
@@ -70,10 +84,10 @@ function proVoted(G, all){
   return [["Most Valuable Player", off, p => seasonValue(p) * (p.pos === "QB" ? 1.2 : 1) * tf(p), "League MVP"],
     ["Offensive Player of the Year", off, p => seasonValue(p) * (p.pos === "QB" ? .92 : 1.1), ""],
     ["Defensive Player of the Year", def, p => seasonValue(p) * (.85 + .2 * tf(p)), ""],
-    ["Offensive Rookie of the Year", off.filter(p => p.exp === 0), p => seasonValue(p) * (p.pos === "QB" ? 1.1 : 1), ""],
-    ["Defensive Rookie of the Year", def.filter(p => p.exp === 0), p => seasonValue(p), ""]];
+    ["Offensive Rookie of the Year", off.filter(p => isRookie(G, p)), p => seasonValue(p) * (p.pos === "QB" ? 1.1 : 1), ""],
+    ["Defensive Rookie of the Year", def.filter(p => isRookie(G, p)), p => seasonValue(p), ""]];
 }
-function allRookie(G, A, all){ const [ar] = allTeams(G, all.filter(p => p.exp === 0), 1); ar.forEach(p => p.aw.push([G.year, "All-Rookie Team"])); A.rook = ar.map(p => ref(G, p)); }
+function allRookie(G, A, all){ const [ar] = allTeams(G, all.filter(p => isRookie(G, p)), 1); A.rkFix = 1; ar.forEach(p => p.aw.push([G.year, "All-Rookie Team"])); A.rook = ar.map(p => ref(G, p)); }
 // Saves made before award voting existed: add the ballots for this season's awards without changing who won.
 function backfillVotes(G){
   const P = G.awards && G.awards.pro, C = G.awards && G.awards.col;
@@ -150,7 +164,7 @@ function collegeAwards(G){
 }
 
 function proAwards(G){
-  const all = proPlayers(G).filter(p => (p.st.g || 0) >= 6), A = G.awards.pro = { list: [] }, tf = p => .7 + .45 * winPct(T(G, p.tid));
+  const all = proPlayers(G).filter(p => (p.st.g || 0) >= 6), A = G.awards.pro = { list: [], rkFix: 1 }, tf = p => .7 + .45 * winPct(T(G, p.tid));
   const give = (name, p, note) => { if (!p) return; p.aw.push([G.year, name]); A.list.push(Object.assign({ a: name, note }, ref(G, p))); };
   const off = all.filter(p => isOff(p.pos) && GROUP(p.pos) !== "OL"), def = all.filter(p => isDef(p.pos));
   proVoted(G, all).forEach(([name, pool, f, note]) => { const w = voteAward(G, A, name, pool.map(p => [p, f(p)]), 50); give(name, w, note); if (w && isUser(G, w.tid)) { news(G, `Your ${w.pos} ${pname(w)} is the ${name}.`, "award", w.tid); gainLP(G, /Valuable/.test(name) ? 6 : 3, name); } });
@@ -164,6 +178,7 @@ function proAwards(G){
   A.ap1 = a1.map(p => ref(G, p)); A.ap2 = a2.map(p => ref(G, p));
   A.pb = {}; PRO_CONFS.forEach(c => { const t = allTeams(G, all.filter(p => T(G, p.tid).conf === c), 2).flat(); t.forEach(p => p.aw.push([G.year, "Pro Bowl"])); A.pb[c] = t.map(p => ref(G, p)); });
   const h = seasonHist(G); h.proAwards = A.list; h.ap1 = A.ap1; h.coyPro = A.coy;
+  allStarGame(G);
   const mvp = A.list[0]; if (mvp) news(G, `${mvp.pos} ${mvp.n} of the ${T(G, mvp.tid).nick} is the league MVP.`, "award", mvp.tid);
 }
 
