@@ -246,7 +246,7 @@ function buildCollege(G){
     const c = CONFS[cid]; G.confs[cid] = { id: cid, name: c.name, full: c.full, games: c.games, champs: [] };
     c.teams.split(";").forEach(row => {
       const [name, nick, abbr, pr, c1, c2, st] = row.split("|"), id = 100 + G.col.length;
-      G.col.push({ id, name, nick, abbr, conf: cid, prestige: +pr, c1, c2, state: st, w: 0, l: 0, cw: 0, cl: 0, pf: 0, pa: 0, res: [], rank: 0, rkAll: 0, rkHist: [], pw: 0, morale: 0,
+      G.col.push({ id, name, nick, abbr, conf: cid, prestige: +pr, pr0: +pr, c1, c2, state: st, w: 0, l: 0, cw: 0, cl: 0, pf: 0, pa: 0, res: [], rank: 0, rkAll: 0, rkHist: [], pw: 0, morale: 0,
         hist: [], titles: 0, confTitles: 0, bowlW: 0, bowlL: 0, heismans: 0, allAm: 0, picks: 0, allW: 0, allL: 0 });
     });
   });
@@ -276,7 +276,8 @@ function salaryFor(p){
 function buildProRoster(G, t){
   const cols = G.col;
   POS.forEach(pos => { for (let i = 0; i < PRO_NEED[pos]; i++) {
-    const depth = i / STARTERS[pos], target = gauss(depth < 1 ? 84 : depth < 2 ? 74 : 67, depth < 1 ? 5.5 : 4);
+    // Starting quarterbacks spread wider than other starters: a handful of elite ones, plenty who aren't.
+    const depth = i / STARTERS[pos], qb1 = pos === "QB" && depth < 1, target = gauss(qb1 ? 80 : depth < 1 ? 84 : depth < 2 ? 74 : 67, qb1 ? 6.5 : depth < 1 ? 5.5 : 4);
     const age = clamp(round(gauss(depth < 1 ? 27 : 25, 2.8)), 22, 36), p = makePlayer(G, pos, target, age);
     p.tid = t.id; p.exp = Math.max(0, age - 22 - rint(0, 1)); p.col = wpick(cols.map(c => [c.id, c.prestige * c.prestige]));
     p.c = { amt: salaryFor(p), yrs: rint(1, 4) }; p.stars = clamp(round((p.ovr - 56) / 8), 1, 5);
@@ -290,6 +291,8 @@ function buildProRoster(G, t){
       p.hist.push(Object.assign({ y: G.year - k, lvl: "P", t: ht.abbr, tid: ht.id, age: age - k }, fakeLine(pos, o, rint(12, 17), st))); }
     if (prevT) p.tx.push([G.year - movedAt, `Signed with the ${t.nick}`]);
     if (chance(.8)) { const pk = clamp(round((92 - p.ovr) * 9 + gauss(0, 30)), 1, 224); p.draft = { y: draftY, rd: Math.ceil(pk / 32), pk, t: first.abbr }; }
+    // A drafted player still with his first team is on what is left of his four-year rookie deal.
+    if (p.draft && !prevT && proY <= 3) p.c.yrs = 4 - proY;
     p.ovh.push([G.year - 1, p.ovr]);
     G.players[p.id] = p;
   } });
@@ -299,7 +302,7 @@ function makeCoach(G, q){ return { name: pick(FIRST) + " " + pick(LAST), age: ri
 function newGame(o = {}){
   const seed = o.seed != null && o.seed !== "" ? (isNaN(+o.seed) ? hashSeed(o.seed) : +o.seed) : null;
   if (seed != null) _rng = mulberry32(seed);
-  const G = { v: 1, year: 2026, week: 0, phase: "pre", offStep: 0, mode: o.mode || "college", uid: null, pid: 0, players: {}, news: [], hist: [], lp: 5,
+  const G = { v: 1, proFix: 1, rcFix: 1, prFix: 1, year: 2026, week: 0, phase: "pre", offStep: 0, mode: o.mode || "college", uid: null, pid: 0, players: {}, news: [], hist: [], lp: 5,
     coach: { name: o.name || "Coach", hist: [], aw: [], w: 0, l: 0 }, picks: {}, pickRec: { w: 0, l: 0, streak: 0, best: 0 }, preds: {}, events: [], usedEv: [], perks: {},
     scouted: {}, pitches: {}, records: { col: {}, pro: {}, colCareer: {}, proCareer: {} }, hof: [], colHof: [], legends: {}, seed };
   buildCollege(G); buildPro(G);
@@ -712,6 +715,13 @@ function settleBowls(G, w){
     if (isUser(G, win.id) || isUser(G, lose.id)) news(G, `${g.tag}: ${win.name} ${Math.max(g.hs, g.as)}, ${lose.name} ${Math.min(g.hs, g.as)}.`, "post", win.id);
   });
 }
+// A program's historical level: the prestige it was created with (looked up from the data for older saves).
+let _basePr = null;
+function basePrestige(t){
+  if (t.pr0 != null) return t.pr0;
+  if (!_basePr) { _basePr = {}; Object.values(CONFS).forEach(c => c.teams.split(";").forEach(r => { const f = r.split("|"); _basePr[f[2]] = +f[3]; })); }
+  return (t.pr0 = _basePr[t.abbr] != null ? _basePr[t.abbr] : round(t.prestige));
+}
 function finishCollegeSeason(G){
   const fg = gameById(G, G.cfp.final), champ = T(G, winnerOf(fg)), ru = T(G, loserOf(fg));
   G.cfp.champ = champ.id; champ.titles++; champ._post = "National Champions"; ru._post = "National runner-up";
@@ -724,7 +734,11 @@ function finishCollegeSeason(G){
   G.col.forEach(t => {
     t.hist.push({ y: G.year, w: t.w, l: t.l, cw: t.cw, cl: t.cl, rk: t.rank, post: t._post || (t.w >= 6 ? "" : ""), cc: G.confs[t.conf].champ === t.id ? 1 : 0, coach: t.coach.name, pf: t.pf, pa: t.pa, pr: round(t.prestige) });
     // Prestige drifts toward how the program is actually doing.
-    const exp = (t.prestige - 45) / 52 * .66 + .19, d = (winPct(t) - exp) * 6 + (t.rank && t.rank <= 10 ? .5 : 0) + (t === champ ? 2 : 0) + (G.confs[t.conf].champ === t.id ? .7 : 0) - Math.max(0, t.prestige - 90) * .12;
+    // What counts as a good year depends on who was on the schedule: 10-2 in a small league is expected
+    // of a decent program, 8-4 in the toughest one is not a failure. Each program is also pulled back toward
+    // its historical level (pr0), so small schools can rise for a while but the sport's pecking order holds.
+    const sosP = t.res.length ? avgOf(t.res, r => r[0] < 0 ? 38 : T(G, r[0]).prestige, 68) : 68, exp = clamp(.5 + (t.prestige - sosP) * .0127, .12, .9);
+    const d = (winPct(t) - exp) * 6 + (t.rank && t.rank <= 10 ? .5 : 0) + (t === champ ? 2 : 0) + (G.confs[t.conf].champ === t.id ? .7 : 0) - Math.max(0, t.prestige - 90) * .12 - (t.prestige - basePrestige(t)) * (isUser(G, t.id) ? .03 : .1);
     t.prestige = clamp(round((t.prestige + clamp(d, -3, 4)) * 10) / 10, 30, 99);
     delete t._post; delete t.postBonus;
   });
@@ -762,6 +776,7 @@ function finishProSeason(G){
   news(G, `${tname(champ)} win Pocket Bowl ${ROMAN(G.year - 1965)}, ${Math.max(fg.hs, fg.as)}–${Math.min(fg.hs, fg.as)} over the ${ru.nick}.${mvp ? " MVP: " + pname(mvp) + "." : ""}`, "champ", champ.id);
   const depth = {}; G.pp.rounds.forEach((r, i) => r.forEach(id => { const g = gameById(G, id); depth[loserOf(g)] = ["Lost Wild Card", "Lost Divisional", "Lost Conf. Championship", "Lost Pocket Bowl"][i]; }));
   G.pro.forEach(t => t.hist.push({ y: G.year, w: t.w, l: t.l, post: t === champ ? "Won Pocket Bowl" : depth[t.id] || "", coach: t.coach.name, pf: t.pf, pa: t.pa }));
+  rosterOf(G, champ.id).forEach(p => { if (!(p.st.g > 0)) (p.rg = p.rg || []).push([G.year, "P", champ.id]); });
   const h = seasonHist(G); h.proChamp = champ.id; h.proRU = ru.id; h.proScore = [Math.max(fg.hs, fg.as), Math.min(fg.hs, fg.as)]; h.pbMvp = mvp ? [mvp.id, pname(mvp), mvp.pos] : null;
   if (G.mode === "pro") { const t = userTeam(G), row = t.hist[t.hist.length - 1]; G.coach.hist.push({ y: G.year, tid: t.id, w: t.w, l: t.l, note: row.post }); G.coach.w += t.w; G.coach.l += t.l; }
 }
@@ -955,6 +970,18 @@ function proAwards(G){
 const REC_KEYS = [["py","Passing yards"],["ptd","Passing TD"],["ry","Rushing yards"],["rtd","Rushing TD"],["rec","Receptions"],["rcy","Receiving yards"],["rctd","Receiving TD"],["tk","Tackles"],["sck","Sacks"],["int","Interceptions"],["fgm","Field goals"]];
 function careerTotals(p, lvl){ const o = {}; p.hist.forEach(r => { if (r.lvl !== lvl) return; STAT_KEYS.concat(["g", "gs"]).forEach(k => { if (r[k]) o[k] = (o[k] || 0) + r[k]; }); }); return o; }
 // Close the books on a season: stamp league leaders, push the history row, update records.
+// Championship rings: one for every title a player's team won while he was on it. Derived from the
+// season history, so old saves get them too; p.rg only covers pros who never got into a game that year.
+function ringsOf(G, p){
+  const out = [], seen = {}, add = (y, lvl, tid) => { const k = y + lvl; if (seen[k]) return; seen[k] = 1; out.push({ y, lvl, tid }); };
+  (G.hist || []).forEach(h => {
+    const rows = p.hist.filter(r => r.y === h.y);
+    rows.forEach(r => { if (r.lvl === "C" && r.tid === h.natChamp) add(h.y, "C", r.tid); if (r.lvl === "P" && r.tid === h.proChamp) add(h.y, "P", r.tid); });
+    if (!rows.length && h.y === G.year && G.phase !== "off" && p.tid != null && !p.ret) { if (p.tid === h.natChamp) add(h.y, "C", p.tid); if (p.tid === h.proChamp) add(h.y, "P", p.tid); }
+  });
+  (p.rg || []).forEach(r => add(r[0], r[1], r[2]));
+  return out.sort((a, b) => a.y - b.y);
+}
 function archiveStats(G){
   [["C", colPlayers(G), G.records.col, G.records.colCareer], ["P", proPlayers(G), G.records.pro, G.records.proCareer]].forEach(([lvl, pool, seasonRec, careerRec]) => {
     const lead = {}; REC_KEYS.forEach(([k]) => { let b = null; pool.forEach(p => { if ((p.st[k] || 0) > (b ? b.st[k] : 0)) b = p; }); if (b) (lead[b.id] || (lead[b.id] = [])).push(k); });
@@ -1085,8 +1112,8 @@ function fillProRosters(G, includeUser){
     POS.forEach(pos => {
       let have = rosterOf(G, t.id).filter(p => p.pos === pos);
       while (have.length < PRO_NEED[pos]) { let p = freeAgents(G).find(x => x.pos === pos); if (!p) { p = addP(G, makePlayer(G, pos, gauss(63, 3), rint(22, 25))); p.exp = 0; p.fa = 1; }
-        p.c = { amt: Math.min(askOf(G, p), Math.max(.9, capRoom(G, t.id) / 4)), yrs: 1 }; delete p.fa; moveP(G, p, t.id); if (p.exp == null) p.exp = 0; p.tx.push([G.year, `Signed with the ${t.nick}`]); have.push(p);
-        if (user) news(G, `Roster filled: ${pos} ${pname(p)} (${p.ovr}) signs a one-year deal.`, "fa", t.id); }
+        p.c = { amt: Math.min(askOf(G, p), Math.max(.9, capRoom(G, t.id) / 4)), yrs: p.exp === 0 && !p.draft ? 3 : 1 }; delete p.fa; moveP(G, p, t.id); if (p.exp == null) p.exp = 0; p.tx.push([G.year, `Signed with the ${t.nick}`]); have.push(p);
+        if (user) news(G, `Roster filled: ${pos} ${pname(p)} (${p.ovr}) signs a ${p.c.yrs === 3 ? "three" : "one"}-year deal.`, "fa", t.id); }
       if (!user) have.sort((a, b) => b.ovr + (b.draft && b.draft.y === G.year ? 6 : 0) - a.ovr - (a.draft && a.draft.y === G.year ? 6 : 0)).slice(PRO_NEED[pos] + 1).forEach(p => releaseP(G, p));
     });
   });
@@ -1096,16 +1123,48 @@ function fillProRosters(G, includeUser){
 /* --- the draft --- */
 // College ratings are measured against college players. The day a player turns pro he is
 // re-rated on the pro scale, so a 95 in college is a promising rookie, not an instant All-Pro.
-const proProj = v => round(48 + (v - 48) * .76);
+// A top college player becomes a promising rookie, not a ready-made Pro Bowler: a college 92 is a
+// mid-70s pro. College potential runs high (most draft prospects are 90+), so the pro ceiling is set
+// fresh from how good he is now, how far he still had to grow and how young he is, plus luck. That
+// keeps each draft class to a handful of future stars, so the league doesn't get better every year.
+const PRO_SCALE = { a: 40, b: .8, head: 7, gap: .5, age: 1.5, sd: 7, QB: { head: 2, sd: 6 } };
+const proProj = v => round(PRO_SCALE.a + (v - 48) * PRO_SCALE.b);
 function toProScale(p){
-  if (p.proScaled) return; const pot0 = p.pot, d = p.ovr - proProj(p.ovr);
-  p.colPeak = p.ovr; p.r = p.r.map(v => clamp(v - d, 25, 99)); p.ovr = calcOvr(p); p.pot = clamp(Math.max(p.ovr, round(52 + (pot0 - 52) * .84)), p.ovr, 99); p.proScaled = 1;
+  if (p.proScaled) return; const S = PRO_SCALE, pot0 = p.pot, ovr0 = p.ovr, d = p.ovr - proProj(p.ovr);
+  p.colPeak = p.ovr; p.r = p.r.map(v => clamp(v - d, 25, 99)); p.ovr = calcOvr(p);
+  // Quarterback is the hardest position to project: a lower ceiling on average, and more boom or bust.
+  const X = Object.assign({}, S, S[p.pos] || {});
+  p.pot = clamp(round(p.ovr + X.head + Math.max(0, pot0 - ovr0) * X.gap + (22 - p.age) * X.age + gauss(0, X.sd)), p.ovr, 97); p.proScaled = 1;
+}
+// One-time repair (Nov 2026). Older worlds turned college stars into ready-made pros and gave most
+// draft picks a 91 ceiling, so the pro league got better every year — quarterbacks most visibly.
+// Re-rate every pro and free agent once, position by position, onto the spread of a freshly built
+// league (percentiles below, measured from 12 new worlds). Ratings only ever come down, everyone keeps
+// his place in the pecking order, and rating history moves with him so career charts stay smooth.
+const PRO_REF_Q = [0, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 98, 100];
+const PRO_REF = {QB: [58.2, 62.9, 64.6, 67.1, 69.3, 71.3, 73.7, 75.2, 77.1, 79.3, 83.8, 86.7, 90.0, 94.0], RB: [56.6, 61.8, 63.7, 65.7, 67.8, 69.4, 71.4, 73.7, 76.3, 80.6, 85.4, 88.4, 90.6, 95.2], WR: [64.3, 69.3, 70.7, 72.9, 74.7, 76.6, 78.5, 80.3, 83.0, 85.5, 88.7, 91.0, 93.2, 97.5], TE: [59.6, 63.0, 64.9, 67.1, 69.4, 71.6, 74.0, 76.0, 79.3, 82.7, 87.8, 90.1, 92.7, 95.4], OT: [63.5, 68.8, 70.7, 72.7, 74.7, 76.5, 78.3, 80.6, 82.8, 85.8, 88.2, 90.9, 92.9, 96.3], OG: [64.6, 68.7, 70.6, 72.8, 74.6, 76.4, 78.4, 80.3, 82.6, 85.7, 88.4, 91.0, 92.7, 96.4], C: [65.3, 68.8, 70.3, 73.0, 75.1, 76.7, 78.8, 80.7, 82.7, 84.8, 88.7, 90.9, 92.9, 95.4], DE: [64.7, 68.7, 70.5, 72.7, 74.8, 76.8, 78.7, 80.5, 82.8, 85.5, 88.2, 90.6, 93.2, 97.0], DT: [64.8, 69.2, 70.6, 72.5, 74.8, 76.5, 78.7, 80.4, 82.8, 85.3, 88.7, 91.6, 93.4, 96.8], LB: [63.4, 68.8, 70.3, 72.8, 74.7, 76.4, 78.4, 80.6, 83.1, 85.7, 88.8, 90.7, 92.8, 96.9], CB: [57.2, 63.0, 64.8, 67.5, 69.8, 71.7, 73.9, 76.3, 79.3, 83.0, 87.5, 90.2, 92.7, 96.9], S: [65.0, 68.5, 70.6, 72.8, 74.3, 76.2, 78.3, 80.3, 82.8, 85.8, 88.3, 90.5, 92.1, 95.5], K: [70.5, 75.8, 76.8, 78.8, 80.8, 82.6, 84.3, 85.5, 87.2, 89.1, 91.2, 92.7, 94.5, 96.2], P: [72.4, 75.5, 76.5, 79.3, 80.8, 82.3, 84.5, 85.8, 86.8, 88.8, 90.3, 91.4, 92.9, 95.8]};
+function rerateProLeague(G){
+  if (G.proFix) return; G.proFix = 1;
+  const f = (xs, ys, x) => { const n = xs.length; if (x <= xs[0]) return ys[0] + (x - xs[0]); if (x >= xs[n - 1]) return ys[n - 1] + (x - xs[n - 1]);
+    for (let i = 1; i < n; i++) if (x <= xs[i]) { const t = xs[i] === xs[i - 1] ? 1 : (x - xs[i - 1]) / (xs[i] - xs[i - 1]); return ys[i - 1] + t * (ys[i] - ys[i - 1]); } return x; };
+  const fas = freeAgents(G);
+  POS.forEach(pos => {
+    const ros = proPlayers(G).filter(p => p.pos === pos); if (ros.length < 32) return;
+    const v = ros.map(p => p.ovr).sort((a, b) => a - b), xs = PRO_REF_Q.map(q => v[Math.min(v.length - 1, Math.round(q / 100 * (v.length - 1)))]);
+    ros.concat(fas.filter(p => p.pos === pos)).forEach(p => {
+      const d = Math.min(0, round(f(xs, PRO_REF[pos], p.ovr) - p.ovr));
+      if (d) { p.r = p.r.map(x => clamp(x + d, 25, 99)); p.ovr = calcOvr(p); p.pot = clamp(p.pot + d, p.ovr, 99); p.ovh = (p.ovh || []).map(([y, o]) => [y, clamp(o + d, 25, 99)]); }
+      // Draft picks from the old conversion kept a 91 ceiling almost to a man; cap what is left to grow by age.
+      if (p.colPeak != null && p.age <= 27) p.pot = clamp(Math.min(p.pot, p.ovr + 3 + Math.max(0, 26 - p.age) * 2.5), p.ovr, 99);
+    });
+  });
+  G._ovr = null; G._ros = null;
 }
 function draftAssign(G, p){
   const d = G.draft, pk = d.pick + 1, t = T(G, d.order[d.pick]), ct = T(G, p.col);
   p.draft = { y: G.year + 1, rd: Math.ceil(pk / 32), pk, t: t.abbr }; p.c = { amt: +Math.max(.9, 9.5 * Math.pow(.982, pk)).toFixed(2), yrs: 4 }; p.exp = 0; delete p.cls; delete p.dcl; delete p.recruit; toProScale(p);
   moveP(G, p, t.id); p.tx.push([G.year + 1, `Drafted by the ${t.city} ${t.nick} — round ${p.draft.rd}, pick ${pk}`]);
-  if (ct) ct.picks++; d.pool.splice(d.pool.indexOf(p.id), 1); d.log.push([pk, t.id, p.id, pname(p), p.pos, ct ? ct.id : null, d.rank ? d.rank[p.id] || 0 : 0]); d.pick++;
+  if (ct) ct.picks++; d.pool.splice(d.pool.indexOf(p.id), 1); d.log.push([pk, t.id, p.id, pname(p), p.pos, ct ? ct.id : null, d.rank ? d.rank[p.id] || 0 : 0, p.ovr, p.stars || 0]); d.pick++;
   if (pk === 1) news(G, `With the first pick, the ${t.nick} select ${ct ? ct.name : ""} ${p.pos} ${pname(p)}.`, "draft", t.id);
   if (ct && isUser(G, ct.id)) { news(G, `Your ${p.pos} ${pname(p)} goes in round ${p.draft.rd} (No. ${pk}) to the ${t.nick}.`, "draft", ct.id); gainLP(G, p.draft.rd === 1 ? 3 : 1, "a player drafted"); }
   if (d.pick >= d.order.length) finishDraft(G);
@@ -1127,7 +1186,7 @@ function finishDraft(G){
   const sc = Object.keys(by).map(tid => [+tid, by[tid].s / Math.max(1, by[tid].n), by[tid].best]).sort((a, b) => b[1] - a[1]);
   d.grades = sc.map(([tid, s, best], i) => ({ tid, g: ["A+", "A", "A", "A-", "A-", "B+", "B+", "B+", "B", "B", "B", "B", "B-", "B-", "B-", "B-", "C+", "C+", "C+", "C+", "C", "C", "C", "C", "C-", "C-", "C-", "D+", "D+", "D", "D", "F"][Math.min(31, i)], best }));
   delete d.rank;
-  const h = seasonHist(G); h.draft = d.log.slice(0, 32);
+  const h = seasonHist(G); h.draft = d.log.slice(0, 32); h.draftAll = d.log.slice();
 }
 
 /* --- recruiting --- */
@@ -1186,7 +1245,7 @@ function progression(G){
     const p = G.players[id]; if (p.ret) continue; if (p.tid == null && !p.fa) continue;
     p.age++; let d;
     if (p.tid != null && p.tid >= 100) { const t = T(G, p.tid); d = gauss((p.pot - p.ovr) * .3 + .9 + (t.coach.ovr - 60) * .015 + (isUser(G, t.id) ? (G.perks.dev || 0) * .3 + ((G.fac || {}).train || 0) * .22 : 0), 2); d = clamp(d, -1, 9); if (p.rs === G.year) p.rsd = 1; p.cls = Math.min(3, (p.cls || 0) + (p.enr === G.year + 1 || p.rs === G.year ? 0 : 1)); }
-    else { p.exp = (p.exp || 0) + 1; d = p.age <= 25 ? gauss((p.pot - p.ovr) * .3 + .4 + (isUser(G, p.tid) ? ((G.fac || {}).train || 0) * .18 : 0), 1.8) : p.age <= 29 ? gauss(0, 1.2) : p.age <= 32 ? gauss(-1.2, 1.5) : gauss(-2.6, 1.6); }
+    else { p.exp = (p.exp || 0) + 1; d = p.age <= 25 ? gauss((p.pot - p.ovr) * .3 + .4 + (isUser(G, p.tid) ? ((G.fac || {}).train || 0) * .18 : 0), 1.8) : p.age <= 27 ? gauss((p.pot - p.ovr) * .3, 1.2) : p.age <= 29 ? gauss(0, 1.2) : p.age <= 32 ? gauss(-1.2, 1.5) : gauss(-2.6, 1.6); }
     tweakRatings(p, round(d + (p.age <= 26 ? (trait(p, "we") - 3) * .3 : 0))); p.ovh.push([G.year + 1, p.ovr]); if (p.ovh.length > 22) p.ovh.shift();
   }
 }
@@ -1424,7 +1483,7 @@ function buyFac(G, k){ G.fac = G.fac || {}; const lv = G.fac[k] || 0; if (lv >= 
 
 /* ----------------------------- conference realignment ----------------------------- */
 function confStrength(G, cid){ return avgOf(G.col.filter(t => t.conf === cid), t => t.prestige, 0); }
-function moveConf(G, t, to){ const from = t.conf; t.conf = to; (G.realign = G.realign || []).unshift({ y: G.year + 1, tid: t.id, from, to }); news(G, `REALIGNMENT: ${t.name} will leave the ${G.confs[from].name} for the ${G.confs[to].name} next season.`, "off", t.id); }
+function moveConf(G, t, to){ const from = t.conf; t.conf = to; t.pr0 = round((basePrestige(t) + t.prestige) / 2); (G.realign = G.realign || []).unshift({ y: G.year + 1, tid: t.id, from, to }); news(G, `REALIGNMENT: ${t.name} will leave the ${G.confs[from].name} for the ${G.confs[to].name} next season.`, "off", t.id); }
 function realignment(G){
   if (G.hist.length < 2 || !chance(.14)) return;
   const confs = CONF_ORDER.filter(c => c !== "IND").map(c => [c, confStrength(G, c), G.col.filter(t => t.conf === c).length]).sort((a, b) => b[1] - a[1]);
@@ -1479,12 +1538,58 @@ function combineBoard(G){
 // Replay the user's finished games many times with today's rosters. Changes nothing.
 function whatIf(G, n){
   const games = [...G.cs, ...G.ps].filter(g => g.done && !g.post && (g.h === G.uid || g.a === G.uid)).sort((a, b) => a.w - b.w); if (!games.length) return null;
-  const wins = new Array(n).fill(0), rows = games.map(g => { const [H, A] = gameTeams(G, g), home = g.h === G.uid; let w = 0, pf = 0, pa = 0;
-    for (let k = 0; k < n; k++) { const r = simGame(G, H, A, { neutral: g.neutral, noInj: true, era: G.era ? G.era.k : 0, wx: g.wx || "", crowd: crowdOf(G, H), plan: [planOf(G, H), planOf(G, A)] }), me = r.sc[home ? 0 : 1], them = r.sc[home ? 1 : 0]; if (me > them) { w++; wins[k]++; } pf += me; pa += them; }
-    return { gid: g.id, w: g.w, opp: home ? A : H, home, won: (home ? g.hs : g.as) > (home ? g.as : g.hs), us: home ? g.hs : g.as, them: home ? g.as : g.hs, p: w / n, pf: pf / n, pa: pa / n }; });
+  const ctx = games.map(g => { const [H, A] = gameTeams(G, g); return { g, H, A, home: g.h === G.uid }; });
+  const acc = ctx.map(() => ({ w: 0, pf: 0, pa: 0 })), seasons = [], wins = new Array(n).fill(0);
+  for (let k = 0; k < n; k++) { const sc = []; let w = 0, pf = 0, pa = 0;
+    ctx.forEach((c, i) => { const g = c.g, r = simGame(G, c.H, c.A, { neutral: g.neutral, noInj: true, era: G.era ? G.era.k : 0, wx: g.wx || "", crowd: crowdOf(G, c.H), plan: [planOf(G, c.H), planOf(G, c.A)] }), me = r.sc[c.home ? 0 : 1], them = r.sc[c.home ? 1 : 0];
+      if (me > them) { w++; acc[i].w++; } acc[i].pf += me; acc[i].pa += them; pf += me; pa += them; sc.push([me, them]); });
+    wins[k] = w; seasons.push({ k: k + 1, w, l: ctx.length - w, pf, pa, sc }); }
+  const rows = ctx.map((c, i) => { const g = c.g; return { gid: g.id, w: g.w, opp: c.home ? c.A : c.H, home: c.home, won: (c.home ? g.hs : g.as) > (c.home ? g.as : g.hs), us: c.home ? g.hs : g.as, them: c.home ? g.as : g.hs, p: acc[i].w / n, pf: acc[i].pf / n, pa: acc[i].pa / n }; });
   const dist = new Array(games.length + 1).fill(0); wins.forEach(w => dist[w]++);
   const actual = rows.filter(r => r.won).length, exp = sum(rows, r => r.p);
-  return { n, rows, dist, actual, exp, better: wins.filter(w => w > actual).length / n, worse: wins.filter(w => w < actual).length / n, perfect: dist[games.length] / n };
+  const byQ = seasons.slice().sort((a, b) => b.w - a.w || (b.pf - b.pa) - (a.pf - a.pa));
+  return { n, rows, dist, actual, exp, better: wins.filter(w => w > actual).length / n, worse: wins.filter(w => w < actual).length / n, perfect: dist[games.length] / n, best: byQ[0], worst: byQ[byQ.length - 1], winless: dist[0] / n, bestCount: dist[byQ[0].w], worstCount: dist[byQ[byQ.length - 1].w] };
+}
+
+/* ----------------------------- draft class review ----------------------------- */
+// Every pick of one draft, with where he started (consensus rank, rating on draft day) and where he is now.
+function draftClassYears(G){ return (G.hist || []).filter(h => h.draftAll || h.draft).map(h => ({ y: h.y + 1, full: !!h.draftAll })).reverse(); }
+function draftClassReview(G, y){
+  const h = (G.hist || []).find(x => x.y === y - 1); if (!h || !(h.draftAll || h.draft)) return null;
+  const log = h.draftAll || h.draft, rows = log.map(r => { const p = G.players[r[2]], pro = p ? careerTotals(p, "P") : {};
+    if (p) STAT_KEYS.concat(["g"]).forEach(k => { if (p.st && p.st[k] && p.exp != null) pro[k] = (pro[k] || 0) + p.st[k]; });
+    const ovh = p && p.ovh ? p.ovh.find(o => o[0] >= y - 1) : null, o0 = r[7] != null ? r[7] : ovh ? ovh[1] : null;
+    return { pk: r[0], rd: Math.ceil(r[0] / 32), tid: r[1], pid: r[2], name: r[3], pos: r[4], col: r[5], cons: r[6] || null, o0, stars: r[8] || (p && p.stars) || 0, p, now: p ? seen(G, p).ovr : null, pro, aw: p ? p.aw.filter(a => a[0] >= y).length : 0, rings: p ? ringsOf(G, p).length : 0, gone: !p, ret: p ? p.ret : null, curTid: p ? p.tid : null }; });
+  const live = rows.filter(r => r.now != null).sort((a, b) => b.now - a.now); live.forEach((r, i) => (r.nowRank = i + 1));
+  rows.forEach(r => { if (r.nowRank) r.v = (r.pk - r.nowRank) / Math.sqrt(r.pk + 8); });
+  const vs = rows.filter(r => r.v != null).sort((a, b) => b.v - a.v), nS = Math.round(vs.length * .06); vs.slice(0, nS).forEach(r => { if (r.v >= 1.5) r.tag = "STEAL"; });
+  vs.filter(r => r.pk <= 64).slice(-Math.round(vs.length * .04)).forEach(r => { if (r.v <= -1.5) r.tag = "BUST"; });
+  const act = rows.filter(r => r.p && !r.ret && r.curTid != null).length;
+  return { y, rows, full: !!h.draftAll, active: act, rets: rows.filter(r => r.ret).length, steals: rows.filter(r => r.tag === "STEAL").length, busts: rows.filter(r => r.tag === "BUST").length, years: G.year - y };
+}
+
+/* ----------------------------- program legends: all-time team + eras ----------------------------- */
+// The best player at every spot who ever wore this program's colours (any player still on file).
+function allTimeTeam(G, tid){
+  const pro = !!(T(G, tid) || {}).pro, lvl = pro ? "P" : "C", by = {};
+  for (const id in G.players) { const p = G.players[id]; if (!p.hist) continue;
+    const rows = p.hist.filter(r => r.tid === tid && r.lvl === lvl && !r.dnp), here = rows.length + (p.tid === tid && (p.exp != null) === pro ? 1 : 0); if (!here) continue;
+    const g = sum(rows, r => r.g || 0) + (p.tid === tid && p.st ? p.st.g || 0 : 0), s = awardScore(p, pro) * 2 + here * 3 + g / 8 + p.ovr / 6 + (p.hof || p.chof ? 12 : 0);
+    (by[p.pos] || (by[p.pos] = [])).push({ p, s, yrs: here, g, aw: p.aw.length }); }
+  const out = []; POS.forEach(pos => (by[pos] || []).sort((a, b) => b.s - a.s).slice(0, STARTERS[pos]).forEach(x => out.push(Object.assign({ pos }, x))));
+  return out;
+}
+// Strings of good and bad years from a program's history: dynasties, rises, droughts.
+function programEras(G, tid){
+  const t = T(G, tid); if (!t || !t.hist.length) return [];
+  const pro = !!t.pro, good = h => { const g = Math.max(1, h.w + h.l); return h.w / g >= (pro ? .63 : .75); }, bad = h => { const g = Math.max(1, h.w + h.l); return h.w / g <= (pro ? .38 : .42); };
+  const out = []; let i = 0;
+  while (i < t.hist.length) { const f = good(t.hist[i]) ? good : bad(t.hist[i]) ? bad : null; if (!f) { i++; continue; }
+    let j = i; while (j + 1 < t.hist.length && f(t.hist[j + 1])) j++;
+    if (j - i + 1 >= 3) { const rows = t.hist.slice(i, j + 1), w = sum(rows, r => r.w), l = sum(rows, r => r.l), ti = rows.filter(r => /National Champions|Won Pocket Bowl/.test(r.post || "")).length;
+      out.push({ kind: f === good ? "dynasty" : "drought", from: rows[0].y, to: rows[rows.length - 1].y, w, l, titles: ti, coaches: [...new Set(rows.map(r => r.coach).filter(Boolean))] }); }
+    i = j + 1; }
+  return out;
 }
 
 /* ----------------------------- greatest teams ----------------------------- */
@@ -1921,7 +2026,21 @@ async function saveGame(G){
 async function loadSlot(id){ const raw = await idb("readonly", s => s.get(slotKey(id))); if (!raw) return null; const G = typeof raw === "string" ? JSON.parse(raw) : raw; return migrate(G); }
 async function deleteSlot(id){ try { await idb("readwrite", s => s.delete(slotKey(id))); } catch (e) {} localStorage.setItem(SLOTS_KEY, JSON.stringify(listSlots().filter(s => s.id !== id))); }
 // Add fields that older saves lack here, rather than changing the keys.
-function migrate(G){ G.perks = G.perks || {}; if (G.ivLeft == null) G.ivLeft = 12; G.scouted = G.scouted || {}; G.pickOwn = G.pickOwn || {}; G.dc = G.dc || {}; G.pending = G.pending || []; G.events = G.events || []; G._pbp = {}; G.fac = G.fac || {}; if (G.fans == null) G.fans = 55; G.nego = G.nego || {}; if (G.coach && G.coach.sec == null) G.coach.sec = 62; try { backfillVotes(G); redoRookies(G); ensureStaff(G); if (G.awards && G.awards.pro) allStarGame(G); if (G.mode === "college" && G.phase === "off" && !G.nil) nilReset(G); } catch (e) {} return G; }
+// One-time repair: worlds built before Nov 2026 gave young drafted players a random 1-4 year deal.
+// Anyone still on his draft team with no later signing gets what is left of a four-year rookie contract.
+function fixRookieDeals(G){
+  if (G.rcFix) return; G.rcFix = 1; const yr = G.year + (G.phase === "off" ? 1 : 0);
+  proPlayers(G).forEach(p => {
+    if (!p.draft || !p.c || p.c.tag || p.opt) return; const left = 4 - (yr - p.draft.y);
+    if (left < 1 || left > 4 || p.c.yrs >= left || T(G, p.tid).abbr !== p.draft.t || p.tx.slice(p.tx.findIndex(x => /Drafted by/.test(x[1])) + 1).some(x => /Signed with|Re-signed|Traded/.test(x[1]))) return;
+    p.c.yrs = left; delete p.expiring;
+  });
+}
+// One-time repair: before Nov 2026 prestige had no anchor, so after a decade or two small-conference
+// schools sat in the 90s and mid-table power-conference schools in the 40s. Pull every program the user
+// doesn't coach halfway back to its historical level; the new drift rule does the rest.
+function fixPrestige(G){ if (G.prFix) return; G.prFix = 1; G.col.forEach(t => { const b = basePrestige(t); if (!isUser(G, t.id) && Math.abs(t.prestige - b) > 8) t.prestige = round((b + (t.prestige - b) * .5) * 10) / 10; }); }
+function migrate(G){ G.perks = G.perks || {}; if (G.ivLeft == null) G.ivLeft = 12; G.scouted = G.scouted || {}; G.pickOwn = G.pickOwn || {}; G.dc = G.dc || {}; G.pending = G.pending || []; G.events = G.events || []; G._pbp = {}; G.fac = G.fac || {}; if (G.fans == null) G.fans = 55; G.nego = G.nego || {}; if (G.coach && G.coach.sec == null) G.coach.sec = 62; try { fixRookieDeals(G); } catch (e) {} try { fixPrestige(G); } catch (e) {} try { rerateProLeague(G); } catch (e) {} try { backfillVotes(G); redoRookies(G); ensureStaff(G); if (G.awards && G.awards.pro) allStarGame(G); if (G.mode === "college" && G.phase === "off" && !G.nil) nilReset(G); } catch (e) {} return G; }
 
 /* ===== 08-ui-base.js ===== */
 
@@ -2176,6 +2295,20 @@ function Modal({ children, onClose, wide, accent }){
 }
 
 /* ----------------------------- player page ----------------------------- */
+// A championship ring in the winning team's colour: gold band, team-colour stone, the year underneath.
+function ChampRing({ G, r }){
+  const t = T(G, r.tid) || {}, c = t.c1 || "#64748b", pro = r.lvl === "P", what = pro ? "Pocket Bowl champion" : "National champion";
+  return (<div className="flex flex-col items-center pop" title={`${r.y} ${what} — ${t.pro ? t.city + " " + t.nick : t.name || ""}`}>
+    <svg width="34" height="34" viewBox="0 0 34 34" role="img" aria-label={`${r.y} ${what} ring`}>
+      <ellipse cx="17" cy="21" rx="10.5" ry="9.5" fill="none" stroke={pro ? "#f5c84b" : "#d9dee6"} strokeWidth="3.6" />
+      <ellipse cx="17" cy="21" rx="10.5" ry="9.5" fill="none" stroke="#000" strokeOpacity=".22" strokeWidth="1" />
+      <path d="M9.5 10.5 L12.5 5.5 H21.5 L24.5 10.5 L17 16.5 Z" fill={c} stroke={pro ? "#fde68a" : "#f1f5f9"} strokeWidth="1.3" strokeLinejoin="round" />
+      <path d="M12.5 5.5 L17 10.5 L21.5 5.5 M9.5 10.5 H24.5 M17 10.5 V16.5" stroke="#fff" strokeOpacity=".55" strokeWidth=".8" fill="none" />
+    </svg>
+    <div className="text-[10px] font-bold leading-none mt-0.5" style={{ color: pro ? "#fcd34d" : "#e2e8f0" }}>{r.y}</div>
+    <div className="text-[8px] uppercase tracking-wider text-slate-400 leading-tight">{pro ? "Pocket Bowl" : "Natl title"}</div>
+  </div>);
+}
 function PlayerPage({ pid, onClose }){
   const ui = useUI(), G = ui.G, p = G.players[pid]; if (!p) return null;
   const t = T(G, p.tid), ct = p.col != null ? T(G, p.col) : (t && !t.pro ? t : null), grp = GROUP(p.pos), sv = seen(G, p), inCol = t && !t.pro, pro = p.exp != null;
@@ -2187,6 +2320,7 @@ function PlayerPage({ pid, onClose }){
   const status = p.ret ? `Retired ${p.ret}` : p.recruit ? "High school recruit" : p.dcl ? "Draft prospect" : p.fa ? "Free agent" : p.inj ? `Injured — out ${p.inj} wk` : p.portal ? "In the transfer portal" : "Active";
   const colHist = p.hist.filter(r => r.lvl === "C"), years = p.aw.reduce((m, a) => ((m[a[0]] || (m[a[0]] = [])).push(a), m), {});
   const canScout = !sv.exact && G.lp >= 1;
+  const rings = ringsOf(G, p);
   return (
     <Modal onClose={onClose} wide accent={[tc.c1, tc.c2]}>
       {/* header */}
@@ -2210,6 +2344,7 @@ function PlayerPage({ pid, onClose }){
               {p.c && <span>Contract: <b className="text-slate-100">{money(p.c.amt)}</b> × {p.c.yrs} yr</span>}
               {!pro && <span>GPA {p.gpa.toFixed(2)}</span>}
             </div>
+            {rings.length > 0 && <div className="flex flex-wrap gap-2 mt-2.5">{rings.map((r, i) => <ChampRing key={i} G={G} r={r} />)}</div>}
           </div>
           <div className="flex gap-2 shrink-0 mr-8"><Ring v={sv.ovr} label={sv.exact ? "OVR" : "OVR?"} /><Ring v={sv.pot} label={sv.exact ? "POT" : "POT?"} color="#a78bfa" /></div>
         </div>
@@ -3097,8 +3232,10 @@ function HistoryTab(){
   const ui = useUI(), G = ui.G, [tab, setTab] = useState("Seasons"), c = G.coach, hofs = ids => ids.map(id => G.players[id]).filter(Boolean);
   const titles = c.hist.filter(r => r.note === "National Champions" || r.note === "Won Pocket Bowl").length;
   return (<div>
-    <SubTabs tabs={["Seasons", "Record book", "Halls of Fame", "Greatest teams", "What if?", "Your career"]} value={tab} onChange={setTab} />
+    <SubTabs tabs={["Seasons", "Record book", "Halls of Fame", "Greatest teams", "Draft classes", "Program legends", "What if?", "Your career"]} value={tab} onChange={setTab} />
     {tab === "Greatest teams" && <GreatestTeams />}
+    {tab === "Draft classes" && <DraftClasses />}
+    {tab === "Program legends" && <ProgramLegends />}
     {tab === "What if?" && <WhatIf />}
     {tab === "Seasons" && (G.hist.filter(h => h.natChamp != null || h.proChamp != null).length ? <div className="space-y-2">{G.hist.slice().reverse().filter(h => h.natChamp != null || h.proChamp != null).map(h => <SeasonCard key={h.y} h={h} />)}</div> : <Card><Empty>History is written one season at a time. Finish {G.year} and it starts here.</Empty></Card>)}
     {tab === "Record book" && <div className="grid md:grid-cols-2 gap-3"><RecordBook title="College · single season" rec={G.records.col} /><RecordBook title="College · career" rec={G.records.colCareer} /><RecordBook title="Pro · single season" rec={G.records.pro} /><RecordBook title="Pro · career" rec={G.records.proCareer} /></div>}
@@ -3360,22 +3497,73 @@ function AllStarCard(){
 
 /* ----------------------------- what if? ----------------------------- */
 function WhatIf(){
-  const ui = useUI(), G = ui.G, [res, setRes] = useState(null), [busy, setBusy] = useState(false), t = userTeam(G);
+  const ui = useUI(), G = ui.G, [res, setRes] = useState(null), [busy, setBusy] = useState(false), [n, setN] = useState(150), [custom, setCustom] = useState(""), t = userTeam(G);
   const played = [...G.cs, ...G.ps].filter(g => g.done && !g.post && (g.h === G.uid || g.a === G.uid)).length;
-  const run = () => { setBusy(true); setTimeout(() => { setRes(whatIf(G, 150)); setBusy(false); }, 30); };
-  if (!played) return <Card><Empty>Play some games first. Then this replays your season 150 times to show how much was skill and how much was luck.</Empty></Card>;
+  const run = () => { setBusy(true); setTimeout(() => { setRes(whatIf(G, n)); setBusy(false); }, 60); };
+  const pick = v => { const x = Math.max(10, Math.min(5000, Math.round(+v) || 0)); setCustom(v); if (x >= 10) setN(x); };
+  if (!played) return <Card><Empty>Play some games first. Then this replays your season hundreds of times to show how much was skill and how much was luck.</Empty></Card>;
   const max = res ? Math.max(...res.dist) : 1, luck = res ? res.actual - res.exp : 0;
   return (<div className="space-y-3">
     <Card title={`What if? · ${G.year} ${t.pro ? t.nick : t.name}`} right={played + " regular-season games played"}>
-      <div className="text-sm text-slate-300">Replays every game you've played 150 times with today's roster. Nothing in your save changes.</div>
-      <div className="mt-3"><Btn kind="pri" disabled={busy} onClick={run}>{busy ? "Replaying…" : res ? "Run it again" : "Replay my season 150 times"}</Btn></div></Card>
+      <div className="text-sm text-slate-300">Replays every game you've played with today's roster, as many times as you choose. Nothing in your save changes.</div>
+      <div className="flex flex-wrap items-center gap-1.5 mt-3">{[150, 500, 1000, 2500].map(v => <button key={v} onClick={() => { setN(v); setCustom(""); }} className={cx("px-2.5 py-1 rounded-lg text-xs font-semibold", n === v && !custom ? "bg-acc text-slate-950" : "bg-white/5 text-slate-300")}>{v.toLocaleString()}</button>)}
+        <input value={custom} onChange={e => pick(e.target.value)} inputMode="numeric" placeholder="Custom (10–5000)" className="w-36 bg-[#0b111e] border border-[#26324f] rounded-lg px-2 py-1 text-xs" /></div>
+      <div className="mt-3"><Btn kind="pri" disabled={busy} onClick={run}>{busy ? `Replaying ${n.toLocaleString()} seasons…` : res ? `Run ${n.toLocaleString()} again` : `Replay my season ${n.toLocaleString()} times`}</Btn></div></Card>
     {res && <React.Fragment>
+      <div className="grid sm:grid-cols-2 gap-2">{[["Best season", res.best, "#4ade80", res.bestCount], ["Worst season", res.worst, "#f87171", res.worstCount]].map(([l, s, c, cnt]) => <div key={l} className="card p-3"><div className="text-[10px] uppercase tracking-widest text-slate-500">{l} of {res.n.toLocaleString()}</div><div className="disp text-3xl" style={{ color: c }}>{s.w}–{s.l}</div><div className="text-xs text-slate-400">Replay #{s.k} · scored {s.pf}, allowed {s.pa} ({s.pf - s.pa > 0 ? "+" : ""}{s.pf - s.pa}) · {cnt} replay{cnt === 1 ? "" : "s"} ended {s.w}–{s.l}</div><div className="flex flex-wrap gap-1 mt-2">{s.sc.map(([a, b], i) => <span key={i} title={res.rows[i] ? "Wk " + res.rows[i].w : ""} className={cx("px-1.5 py-0.5 rounded text-[10px] tnum", a > b ? "bg-emerald-500/15 text-emerald-300" : "bg-rose-500/15 text-rose-300")}>{a > b ? "W" : "L"} {a}–{b}</span>)}</div></div>)}</div>
       <div className="grid sm:grid-cols-4 gap-2">{[["Actual wins", res.actual, "#e2e8f0"], ["Expected wins", res.exp.toFixed(1), "#38bdf8"], [luck >= 0 ? "Luck (wins above expected)" : "Luck (wins below expected)", (luck >= 0 ? "+" : "") + luck.toFixed(1), luck >= 0 ? "#4ade80" : "#f87171"], ["Unbeaten in", round(res.perfect * 100) + "% of replays", "#facc15"]].map(([l, v, c]) => <div key={l} className="card p-3 text-center"><div className="disp text-2xl" style={{ color: c }}>{v}</div><div className="text-[10px] text-slate-400">{l}</div></div>)}</div>
       <Card title="How the season usually goes" right={`you did better than ${round(res.worse * 100)}% of replays`}>
         <div className="flex items-end gap-1 h-36">{res.dist.map((n, w) => <div key={w} className="flex-1 h-full flex flex-col justify-end items-center"><div className="text-[8px] text-slate-400">{n ? round(n / res.n * 100) + "%" : ""}</div><div className="w-full rounded-t growY" style={{ height: n / max * 84 + "%", background: w === res.actual ? "#facc15" : "var(--acc)", opacity: w === res.actual ? 1 : .55, animationDelay: w * 25 + "ms" }} /></div>)}</div>
         <div className="flex gap-1 mt-1">{res.dist.map((_, w) => <div key={w} className={cx("flex-1 text-center text-[9px]", w === res.actual ? "text-amber-300 font-bold" : "text-slate-500")}>{w}</div>)}</div><div className="text-[10px] text-slate-500 text-center mt-1">wins · gold is what really happened</div></Card>
       <Card title="Game by game" pad={false}><table className="st tnum"><thead><tr><th className="l">Wk</th><th className="l">Opponent</th><th className="l">Result</th><th className="l w-1/3">Win chance</th><th>Avg score</th></tr></thead><tbody>{res.rows.map(r => <tr key={r.gid} className="cursor-pointer hover:bg-white/5" onClick={() => ui.openGame(r.gid)}><td className="l text-slate-500">{r.w}</td><td className="l">{r.home ? "vs " : "@ "}<TeamLink t={r.opp} /></td><td className={cx("l font-semibold", r.won ? "text-emerald-400" : "text-rose-400")}>{r.won ? "W" : "L"} {r.us}–{r.them}{r.won && r.p < .35 ? <span className="ml-1.5 text-[9px] text-amber-300">STOLE IT</span> : !r.won && r.p > .65 ? <span className="ml-1.5 text-[9px] text-rose-300">LET ONE SLIP</span> : null}</td><td className="l"><div className="flex items-center gap-2"><div className="flex-1"><HBar v={r.p * 100} max={100} color={r.p >= .5 ? "#4ade80" : "#f87171"} h={6} /></div><span className="w-8 text-right text-xs">{round(r.p * 100)}%</span></div></td><td className="text-slate-400">{round(r.pf)}–{round(r.pa)}</td></tr>)}</tbody></table></Card>
     </React.Fragment>}
+  </div>);
+}
+
+/* ----------------------------- draft class review ----------------------------- */
+const dcHead = (r, p) => { const o = r.pro, g = GROUP(r.pos); if (!o.g) return "—"; const f = n => (n || 0).toLocaleString();
+  return g === "QB" ? `${f(o.py)} yds · ${o.ptd || 0} TD · ${o.pi || 0} int` : r.pos === "RB" ? `${f(o.ry)} rush · ${o.rtd || 0} TD` : r.pos === "WR" || r.pos === "TE" ? `${o.rec || 0} rec · ${f(o.rcy)} yds · ${o.rctd || 0} TD` : g === "OL" ? `${o.gs || 0} starts` : g === "KP" ? (r.pos === "K" ? `${o.fgm || 0}/${o.fga || 0} FG` : `${o.pu || 0} punts`) : `${o.tk || 0} tkl · ${o.sck || 0} sck · ${o.int || 0} int`; };
+function DraftClasses(){
+  const ui = useUI(), G = ui.G, yrs = useMemo(() => draftClassYears(G), [G.year, G.phase]), [y, setY] = useState(yrs.length ? yrs[0].y : null), [flt, setFlt] = useState("all"), [sort, setSort] = useState("pk");
+  const dc = useMemo(() => y != null ? draftClassReview(G, y) : null, [y, G.year, G.phase, G.week]);
+  if (!yrs.length) return <Card><Empty>No draft has been run yet. Finish the first draft and every class is tracked here.</Empty></Card>;
+  if (!dc) return null;
+  const mine = r => r.col === G.uid || r.tid === G.uid, shown = dc.rows.filter(r => flt === "all" || (flt === "r1" && r.rd === 1) || (flt === "mine" && mine(r)) || (flt === "steal" && r.tag === "STEAL") || (flt === "bust" && r.tag === "BUST"))
+    .slice().sort((a, b) => sort === "now" ? (a.nowRank || 999) - (b.nowRank || 999) : sort === "move" ? (b.v || -99) - (a.v || -99) : a.pk - b.pk);
+  const top = dc.rows.filter(r => r.nowRank).sort((a, b) => a.nowRank - b.nowRank).slice(0, 3);
+  const chip = (k, l) => <button key={k} onClick={() => setFlt(k)} className={cx("px-2 py-0.5 rounded text-[11px] font-semibold", flt === k ? "bg-acc text-slate-950" : "text-slate-400")}>{l}</button>;
+  return (<div className="space-y-3">
+    <SubTabs tabs={yrs.map(x => [x.y, x.y + " draft"])} value={y} onChange={v => setY(+v)} />
+    <div className="grid sm:grid-cols-4 gap-2">{[["Picks", dc.rows.length, "#e2e8f0"], ["Still playing", dc.active, "#38bdf8"], ["Steals", dc.steals, "#4ade80"], ["Busts", dc.busts, "#f87171"]].map(([l, v, c]) => <div key={l} className="card p-3 text-center"><div className="disp text-2xl" style={{ color: c }}>{v}</div><div className="text-[10px] text-slate-400">{l}</div></div>)}</div>
+    {top.length > 0 && <div className="text-xs text-slate-400">Best of the class right now: {top.map((r, i) => <span key={r.pid}>{i ? " · " : ""}<PLink pid={r.pid} name={r.name} /> <span className="text-slate-500">({r.pos}, No. {r.pk})</span></span>)}</div>}
+    <Card title={`${dc.y} draft class`} right={<span className="inline-flex gap-1">{chip("all", "All")}{chip("r1", "Round 1")}{chip("mine", "Mine")}{chip("steal", "Steals")}{chip("bust", "Busts")}</span>} pad={false}>
+      <div className="overflow-x-auto"><table className="st tnum"><thead><tr><th className="l cursor-pointer" onClick={() => setSort("pk")}>Pick</th><th className="l">Player</th><th className="l">Drafted by</th><th>Board</th><th>Draft day</th><th className="cursor-pointer" onClick={() => setSort("now")}>Now</th><th className="cursor-pointer" onClick={() => setSort("move")}>Class rank</th><th className="l">Pro totals</th><th className="l">Status</th></tr></thead><tbody>{shown.map(r => { const t = T(G, r.tid), ct = r.col != null ? T(G, r.col) : null, cur = r.curTid != null ? T(G, r.curTid) : null;
+        return <tr key={r.pid} className={cx("cursor-pointer hover:bg-white/5", mine(r) && "bg-white/5")} onClick={() => !r.gone && ui.openPlayer(r.pid)}>
+          <td className={cx("l disp", r.pk <= 3 ? "text-amber-300" : "text-slate-400")}>{r.pk}<span className="text-[9px] text-slate-600 ml-1">R{r.rd}</span></td>
+          <td className="l"><div className="font-semibold"><PLink pid={r.pid} name={r.name} /></div><div className="text-[10px] text-slate-500">{r.pos}{ct ? " · " + ct.name : ""}{r.stars ? " · " : ""}{r.stars ? <Stars n={r.stars} /> : null}</div></td>
+          <td className="l">{t ? <TeamLink t={t} /> : "—"}</td>
+          <td className="text-slate-400">{r.cons ? "#" + r.cons : "—"}</td>
+          <td>{r.o0 != null ? <Ovr v={r.o0} /> : <span className="text-slate-600">—</span>}</td>
+          <td>{r.now != null ? <span><Ovr v={r.now} />{r.o0 != null && r.now !== r.o0 && <span className={cx("text-[10px] ml-1", r.now > r.o0 ? "text-emerald-400" : "text-rose-400")}>{r.now > r.o0 ? "▲" : "▼"}{Math.abs(r.now - r.o0)}</span>}</span> : "—"}</td>
+          <td>{r.nowRank ? <span className="font-bold">#{r.nowRank}</span> : "—"}{r.tag && <span className={cx("ml-1 text-[9px] font-bold", r.tag === "STEAL" ? "text-emerald-300" : "text-rose-300")}>{r.tag}</span>}</td>
+          <td className="l text-xs text-slate-300">{dcHead(r)}{r.pro.g ? <span className="text-slate-600"> · {r.pro.g} G</span> : ""}{r.aw ? <span className="text-amber-300 ml-1">🏅{r.aw}</span> : ""}{r.rings ? <span className="ml-1">🏆{r.rings}</span> : ""}</td>
+          <td className="l text-xs">{r.gone ? <span className="text-slate-600">out of the league</span> : r.ret ? <span className="text-slate-500">Retired {r.ret}</span> : cur ? <span>{cur.abbr}{cur.id !== r.tid && <span className="text-slate-500"> (moved)</span>}</span> : <span className="text-slate-400">Free agent</span>}</td></tr>; })}</tbody></table></div>
+      <div className="px-4 py-2 text-[11px] text-slate-500">Board = consensus rank before the draft. Class rank = where he sits among this class by current rating; a steal outplays his slot, a bust doesn't.{!dc.full && " This draft was saved before full classes were tracked, so only round 1 is on file."} Click any player for the full page.</div></Card>
+  </div>);
+}
+
+/* ----------------------------- program legends ----------------------------- */
+function ProgramLegends(){
+  const ui = useUI(), G = ui.G, t = userTeam(G), tm = useMemo(() => allTimeTeam(G, G.uid), [G.year, G.phase]), eras = useMemo(() => programEras(G, G.uid), [G.year, G.phase]);
+  const side = pos => tm.filter(x => ["QB","RB","WR","TE","OT","OG","C"].includes(x.pos) === (pos === "O"));
+  const col = (title, list) => <Card title={title} pad={false}><table className="st tnum"><tbody>{list.map(x => <tr key={x.p.id} className="cursor-pointer hover:bg-white/5" onClick={() => ui.openPlayer(x.p.id)}><td className="l w-10 text-slate-500 font-bold">{x.pos}</td><td className="l"><PLink p={x.p} />{x.p.hof || x.p.chof ? <span className="text-amber-300 ml-1">★</span> : null}</td><td className="text-slate-400 text-xs">{x.yrs} yr{x.yrs === 1 ? "" : "s"}</td><td className="text-slate-400 text-xs">{x.aw ? "🏅" + x.aw : ""}</td><td><Ovr v={seen(G, x.p).ovr} /></td></tr>)}</tbody></table></Card>;
+  return (<div className="space-y-3">
+    <Card title={`${t.pro ? t.nick : t.name} · eras`} right="3+ seasons in a row">
+      {eras.length ? <div className="space-y-2">{eras.map((e, i) => <div key={i} className="flex items-center gap-3 rounded-xl px-3 py-2" style={{ background: e.kind === "dynasty" ? "rgba(74,222,128,.08)" : "rgba(248,113,113,.08)" }}>
+        <div className="disp text-lg w-28" style={{ color: e.kind === "dynasty" ? "#4ade80" : "#f87171" }}>{e.from === e.to ? e.from : e.from + "–" + e.to}</div>
+        <div className="flex-1"><div className="text-sm font-semibold">{e.kind === "dynasty" ? "Golden era" : "Rough stretch"} · {e.w}–{e.l}{e.titles ? <span className="text-amber-300"> · 🏆 {e.titles}</span> : null}</div><div className="text-[11px] text-slate-500">{e.coaches.join(", ")}</div></div></div>)}</div> : <Empty>No stretch of three great or rough seasons in a row yet. Eras appear as the years pile up.</Empty>}</Card>
+    {tm.length ? <div className="grid md:grid-cols-2 gap-3">{col("All-time offense", side("O"))}{col("All-time defense & kicking", side("D"))}</div> : <Card><Empty>Nobody has played for you yet — the all-time team fills in as seasons are played.</Empty></Card>}
+    <div className="text-[11px] text-slate-500">Ranked on awards, seasons in your colours, games played and rating. Click anyone to open their page.</div>
   </div>);
 }
 

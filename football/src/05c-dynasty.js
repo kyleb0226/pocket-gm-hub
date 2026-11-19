@@ -127,7 +127,7 @@ function buyFac(G, k){ G.fac = G.fac || {}; const lv = G.fac[k] || 0; if (lv >= 
 
 /* ----------------------------- conference realignment ----------------------------- */
 function confStrength(G, cid){ return avgOf(G.col.filter(t => t.conf === cid), t => t.prestige, 0); }
-function moveConf(G, t, to){ const from = t.conf; t.conf = to; (G.realign = G.realign || []).unshift({ y: G.year + 1, tid: t.id, from, to }); news(G, `REALIGNMENT: ${t.name} will leave the ${G.confs[from].name} for the ${G.confs[to].name} next season.`, "off", t.id); }
+function moveConf(G, t, to){ const from = t.conf; t.conf = to; t.pr0 = round((basePrestige(t) + t.prestige) / 2); (G.realign = G.realign || []).unshift({ y: G.year + 1, tid: t.id, from, to }); news(G, `REALIGNMENT: ${t.name} will leave the ${G.confs[from].name} for the ${G.confs[to].name} next season.`, "off", t.id); }
 function realignment(G){
   if (G.hist.length < 2 || !chance(.14)) return;
   const confs = CONF_ORDER.filter(c => c !== "IND").map(c => [c, confStrength(G, c), G.col.filter(t => t.conf === c).length]).sort((a, b) => b[1] - a[1]);
@@ -182,12 +182,58 @@ function combineBoard(G){
 // Replay the user's finished games many times with today's rosters. Changes nothing.
 function whatIf(G, n){
   const games = [...G.cs, ...G.ps].filter(g => g.done && !g.post && (g.h === G.uid || g.a === G.uid)).sort((a, b) => a.w - b.w); if (!games.length) return null;
-  const wins = new Array(n).fill(0), rows = games.map(g => { const [H, A] = gameTeams(G, g), home = g.h === G.uid; let w = 0, pf = 0, pa = 0;
-    for (let k = 0; k < n; k++) { const r = simGame(G, H, A, { neutral: g.neutral, noInj: true, era: G.era ? G.era.k : 0, wx: g.wx || "", crowd: crowdOf(G, H), plan: [planOf(G, H), planOf(G, A)] }), me = r.sc[home ? 0 : 1], them = r.sc[home ? 1 : 0]; if (me > them) { w++; wins[k]++; } pf += me; pa += them; }
-    return { gid: g.id, w: g.w, opp: home ? A : H, home, won: (home ? g.hs : g.as) > (home ? g.as : g.hs), us: home ? g.hs : g.as, them: home ? g.as : g.hs, p: w / n, pf: pf / n, pa: pa / n }; });
+  const ctx = games.map(g => { const [H, A] = gameTeams(G, g); return { g, H, A, home: g.h === G.uid }; });
+  const acc = ctx.map(() => ({ w: 0, pf: 0, pa: 0 })), seasons = [], wins = new Array(n).fill(0);
+  for (let k = 0; k < n; k++) { const sc = []; let w = 0, pf = 0, pa = 0;
+    ctx.forEach((c, i) => { const g = c.g, r = simGame(G, c.H, c.A, { neutral: g.neutral, noInj: true, era: G.era ? G.era.k : 0, wx: g.wx || "", crowd: crowdOf(G, c.H), plan: [planOf(G, c.H), planOf(G, c.A)] }), me = r.sc[c.home ? 0 : 1], them = r.sc[c.home ? 1 : 0];
+      if (me > them) { w++; acc[i].w++; } acc[i].pf += me; acc[i].pa += them; pf += me; pa += them; sc.push([me, them]); });
+    wins[k] = w; seasons.push({ k: k + 1, w, l: ctx.length - w, pf, pa, sc }); }
+  const rows = ctx.map((c, i) => { const g = c.g; return { gid: g.id, w: g.w, opp: c.home ? c.A : c.H, home: c.home, won: (c.home ? g.hs : g.as) > (c.home ? g.as : g.hs), us: c.home ? g.hs : g.as, them: c.home ? g.as : g.hs, p: acc[i].w / n, pf: acc[i].pf / n, pa: acc[i].pa / n }; });
   const dist = new Array(games.length + 1).fill(0); wins.forEach(w => dist[w]++);
   const actual = rows.filter(r => r.won).length, exp = sum(rows, r => r.p);
-  return { n, rows, dist, actual, exp, better: wins.filter(w => w > actual).length / n, worse: wins.filter(w => w < actual).length / n, perfect: dist[games.length] / n };
+  const byQ = seasons.slice().sort((a, b) => b.w - a.w || (b.pf - b.pa) - (a.pf - a.pa));
+  return { n, rows, dist, actual, exp, better: wins.filter(w => w > actual).length / n, worse: wins.filter(w => w < actual).length / n, perfect: dist[games.length] / n, best: byQ[0], worst: byQ[byQ.length - 1], winless: dist[0] / n, bestCount: dist[byQ[0].w], worstCount: dist[byQ[byQ.length - 1].w] };
+}
+
+/* ----------------------------- draft class review ----------------------------- */
+// Every pick of one draft, with where he started (consensus rank, rating on draft day) and where he is now.
+function draftClassYears(G){ return (G.hist || []).filter(h => h.draftAll || h.draft).map(h => ({ y: h.y + 1, full: !!h.draftAll })).reverse(); }
+function draftClassReview(G, y){
+  const h = (G.hist || []).find(x => x.y === y - 1); if (!h || !(h.draftAll || h.draft)) return null;
+  const log = h.draftAll || h.draft, rows = log.map(r => { const p = G.players[r[2]], pro = p ? careerTotals(p, "P") : {};
+    if (p) STAT_KEYS.concat(["g"]).forEach(k => { if (p.st && p.st[k] && p.exp != null) pro[k] = (pro[k] || 0) + p.st[k]; });
+    const ovh = p && p.ovh ? p.ovh.find(o => o[0] >= y - 1) : null, o0 = r[7] != null ? r[7] : ovh ? ovh[1] : null;
+    return { pk: r[0], rd: Math.ceil(r[0] / 32), tid: r[1], pid: r[2], name: r[3], pos: r[4], col: r[5], cons: r[6] || null, o0, stars: r[8] || (p && p.stars) || 0, p, now: p ? seen(G, p).ovr : null, pro, aw: p ? p.aw.filter(a => a[0] >= y).length : 0, rings: p ? ringsOf(G, p).length : 0, gone: !p, ret: p ? p.ret : null, curTid: p ? p.tid : null }; });
+  const live = rows.filter(r => r.now != null).sort((a, b) => b.now - a.now); live.forEach((r, i) => (r.nowRank = i + 1));
+  rows.forEach(r => { if (r.nowRank) r.v = (r.pk - r.nowRank) / Math.sqrt(r.pk + 8); });
+  const vs = rows.filter(r => r.v != null).sort((a, b) => b.v - a.v), nS = Math.round(vs.length * .06); vs.slice(0, nS).forEach(r => { if (r.v >= 1.5) r.tag = "STEAL"; });
+  vs.filter(r => r.pk <= 64).slice(-Math.round(vs.length * .04)).forEach(r => { if (r.v <= -1.5) r.tag = "BUST"; });
+  const act = rows.filter(r => r.p && !r.ret && r.curTid != null).length;
+  return { y, rows, full: !!h.draftAll, active: act, rets: rows.filter(r => r.ret).length, steals: rows.filter(r => r.tag === "STEAL").length, busts: rows.filter(r => r.tag === "BUST").length, years: G.year - y };
+}
+
+/* ----------------------------- program legends: all-time team + eras ----------------------------- */
+// The best player at every spot who ever wore this program's colours (any player still on file).
+function allTimeTeam(G, tid){
+  const pro = !!(T(G, tid) || {}).pro, lvl = pro ? "P" : "C", by = {};
+  for (const id in G.players) { const p = G.players[id]; if (!p.hist) continue;
+    const rows = p.hist.filter(r => r.tid === tid && r.lvl === lvl && !r.dnp), here = rows.length + (p.tid === tid && (p.exp != null) === pro ? 1 : 0); if (!here) continue;
+    const g = sum(rows, r => r.g || 0) + (p.tid === tid && p.st ? p.st.g || 0 : 0), s = awardScore(p, pro) * 2 + here * 3 + g / 8 + p.ovr / 6 + (p.hof || p.chof ? 12 : 0);
+    (by[p.pos] || (by[p.pos] = [])).push({ p, s, yrs: here, g, aw: p.aw.length }); }
+  const out = []; POS.forEach(pos => (by[pos] || []).sort((a, b) => b.s - a.s).slice(0, STARTERS[pos]).forEach(x => out.push(Object.assign({ pos }, x))));
+  return out;
+}
+// Strings of good and bad years from a program's history: dynasties, rises, droughts.
+function programEras(G, tid){
+  const t = T(G, tid); if (!t || !t.hist.length) return [];
+  const pro = !!t.pro, good = h => { const g = Math.max(1, h.w + h.l); return h.w / g >= (pro ? .63 : .75); }, bad = h => { const g = Math.max(1, h.w + h.l); return h.w / g <= (pro ? .38 : .42); };
+  const out = []; let i = 0;
+  while (i < t.hist.length) { const f = good(t.hist[i]) ? good : bad(t.hist[i]) ? bad : null; if (!f) { i++; continue; }
+    let j = i; while (j + 1 < t.hist.length && f(t.hist[j + 1])) j++;
+    if (j - i + 1 >= 3) { const rows = t.hist.slice(i, j + 1), w = sum(rows, r => r.w), l = sum(rows, r => r.l), ti = rows.filter(r => /National Champions|Won Pocket Bowl/.test(r.post || "")).length;
+      out.push({ kind: f === good ? "dynasty" : "drought", from: rows[0].y, to: rows[rows.length - 1].y, w, l, titles: ti, coaches: [...new Set(rows.map(r => r.coach).filter(Boolean))] }); }
+    i = j + 1; }
+  return out;
 }
 
 /* ----------------------------- greatest teams ----------------------------- */

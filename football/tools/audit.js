@@ -34,6 +34,10 @@ for (let y = 0; y < years; y++) {
   console.log(`  rosters col ${Math.min(...sizes)}-${Math.max(...sizes)} pro ${Math.min(...psz)}-${Math.max(...psz)} | payroll ${f1(Math.min(...G.pro.map(t => A.payroll(G, t.id))))}-${f1(Math.max(...G.pro.map(t => A.payroll(G, t.id))))} | class #1 ${A.T(G, G.classRank[0].tid).name}`);
   if (Math.max(...sizes) > 60 || Math.max(...psz) > 60) flags.push(`${yr}: oversized roster`);
 }
+// prestige drift: programs should stay within reach of where they started
+const drift = G.col.filter(t => t.pr0 != null && Math.abs(t.prestige - t.pr0) >= 12).sort((a, b) => Math.abs(b.prestige - b.pr0) - Math.abs(a.prestige - a.pr0));
+console.log(`\nprestige drift >= 12 after ${years} years (${drift.length} programs): ${drift.slice(0, 14).map(t => `${t.abbr} ${t.pr0}>${Math.round(t.prestige)}`).join(", ")}`);
+if (drift.some(t => Math.abs(t.prestige - t.pr0) > 22)) flags.push(`prestige ran away: ${drift.filter(t => Math.abs(t.prestige - t.pr0) > 22).map(t => t.abbr).join(", ")}`);
 // career paths
 const all = Object.values(G.players); let aba = 0, abaNew = 0, colAba = 0, multiYearDup = 0, gaps = 0;
 all.forEach(p => { const P = p.hist.filter(r => r.lvl === "P"), C = p.hist.filter(r => r.lvl === "C");

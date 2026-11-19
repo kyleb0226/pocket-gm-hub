@@ -8,7 +8,7 @@
 const fs = require("fs"), path = require("path"), vm = require("vm");
 const ROOT = path.join(__dirname, "..");
 require("child_process").execFileSync("node", [path.join(__dirname, "assemble.js")], { stdio: "inherit" });
-const EXPORTS = ["newGame","simWeek","advanceOff","T","rosterOf","colPlayers","proPlayers","CONF_ORDER","CONFS","COL_NEED","PRO_NEED","POS","gameById","winnerOf","confStandings","draftRun","payroll","CAP","EV","chooseEvent","spawnEvent","buy","SHOP","LAST_WEEK","userGame","stripForSave","freeAgents","pitch","seen","teamPicks","evalTrade","doTrade","shopPlayer","aiTrades","playerVal","depthChart","tradeOpen","userTeam","migrate","PRO_WEEKS","coachGame","finishCoached","whatIf","greatestTeams","takeJob","nilOffer","retainPlayer","hireStaff","buyFac","toggleRedshirt","combineBoard","deadlineOffers","acceptOffer","weatherFor","matchupEdges","jobReview","moveConf","chooseEvent","planOf","checkCommit","nilToLead","recruitLeaders","campBattles","settleBattle","promiseTime","schedOptions","toggleWish","negotiate","tagPlayer","tagCost","fifthYear","tradeDownOffers","acceptTradeDown","treeRows","recordWatch","STARTERS","onClock","capRoom","money"];
+const EXPORTS = ["rerateProLeague","calcOvr","ringsOf","newGame","simWeek","advanceOff","T","rosterOf","colPlayers","proPlayers","CONF_ORDER","CONFS","COL_NEED","PRO_NEED","POS","gameById","winnerOf","confStandings","draftRun","payroll","CAP","EV","chooseEvent","spawnEvent","buy","SHOP","LAST_WEEK","userGame","stripForSave","freeAgents","pitch","seen","teamPicks","evalTrade","doTrade","shopPlayer","aiTrades","playerVal","depthChart","tradeOpen","userTeam","migrate","PRO_WEEKS","coachGame","finishCoached","whatIf","greatestTeams","draftClassReview","allTimeTeam","programEras","draftClassYears","takeJob","nilOffer","retainPlayer","hireStaff","buyFac","toggleRedshirt","combineBoard","deadlineOffers","acceptOffer","weatherFor","matchupEdges","jobReview","moveConf","chooseEvent","planOf","checkCommit","nilToLead","recruitLeaders","campBattles","settleBattle","promiseTime","schedOptions","toggleWish","negotiate","tagPlayer","tagCost","fifthYear","tradeDownOffers","acceptTradeDown","treeRows","recordWatch","STARTERS","onClock","capRoom","money"];
 function load(){
   const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
   const m = html.match(/<script type="text\/babel-src" id="app-src">([\s\S]*?)<\/script>/);
@@ -91,6 +91,17 @@ const CHECKS = {
       ok(np < 12000 && json.length < 2.2e7, `${mode}: world stays bounded`);
       const drafted = A.proPlayers(G).filter(p => p.draft && p.draft.y >= 2027 && p.hist.some(r => r.lvl === "C"));
       ok(drafted.length > 300, `${mode}: ${drafted.length} pros carry their college seasons on their record`);
+      const all = Object.values(G.players), rg = all.map(p => A.ringsOf(G, p)), h0 = G.hist[0];
+      const natl = all.filter((p, i) => rg[i].some(r => r.y === h0.y && r.lvl === "C" && r.tid === h0.natChamp)).length, pb = all.filter((p, i) => rg[i].some(r => r.y === h0.y && r.lvl === "P" && r.tid === h0.proChamp)).length;
+      ok(natl >= 15 && natl <= 60 && pb >= 30 && pb <= 62 && rg.every(r => new Set(r.map(x => x.y + x.lvl)).size === r.length), `${mode}: championship rings — ${natl} for the ${h0.y} national title, ${pb} for the Pocket Bowl, no doubles`);
+      // the hub's career page reads this save shape (site/career.js)
+      { const sbx = { window: {}, localStorage: { getItem: () => null }, setTimeout }; vm.runInNewContext(fs.readFileSync(path.join(ROOT, "..", "site", "career.js"), "utf8"), sbx);
+        const res = sbx.window.PGMCareer.READ.football(sbx.window.PGMCareer.decode(json));
+        ok(res.seasons === 3 && res.w + res.l >= 33 && res.titles === G.coach.hist.filter(r => /National Champions|Won Pocket Bowl/.test(r.note || "")).length, `${mode}: hub career page reads the save (${res.seasons} seasons, ${res.w}-${res.l}, ${res.titles} titles)`); }
+      // pro talent must not inflate: a handful of good quarterbacks, not one on every team and the bench
+      { const qbS = G.pro.map(t => A.depthChart(G, t.id).QB[0]), qbAll = A.proPlayers(G).filter(p => p.pos === "QB"), rk = A.proPlayers(G).filter(p => p.draft && p.draft.y === G.year && p.draft.rd === 1);
+        const s85 = qbS.filter(p => p.ovr >= 85).length, b80 = qbAll.filter(p => p.ovr >= 80).length - qbS.filter(p => p.ovr >= 80).length, r1 = rk.reduce((a, p) => a + p.ovr, 0) / Math.max(1, rk.length);
+        ok(s85 <= 17 && b80 <= 16 && r1 >= 70 && r1 <= 81, `${mode}: pro talent holds after 3 years — ${s85} starting QBs at 85+, ${b80} backup QBs at 80+, first-round rookies avg ${r1.toFixed(1)}`); }
       const pay = G.pro.map(t => A.payroll(G, t.id)); ok(Math.max(...pay) <= A.CAP + 40, `${mode}: payrolls sane (max $${Math.max(...pay).toFixed(0)}M)`);
     });
   },
@@ -110,9 +121,32 @@ const CHECKS = {
     console.log("      MVP vote: " + G.awards.pro.votes["Most Valuable Player"].slice(0, 4).map(v => `${v.n} ${v.pts} (${v.first})`).join(", "));
     console.log("      OROY vote: " + G.awards.pro.votes["Offensive Rookie of the Year"].slice(0, 4).map(v => `${v.pos} ${v.n} ${v.pts}`).join(", "));
   },
+  talent(A){
+    section("Pro talent: quarterbacks and the one-time re-rating");
+    const G = A.newGame({ seed: 31, mode: "pro" }), qbS = () => G.pro.map(t => A.depthChart(G, t.id).QB[0]);
+    const s85 = qbS().filter(p => p.ovr >= 85).length, s80 = qbS().filter(p => p.ovr < 80).length;
+    ok(G.proFix && s85 >= 3 && s85 <= 14 && s80 >= 4, `talent: a new league has ${s85} starting QBs at 85+ and ${s80} below 80`);
+    // an old, inflated save: every pro QB 7 points better, ceilings maxed for the young ones
+    const qbs = A.proPlayers(G).filter(p => p.pos === "QB"); qbs.forEach(p => { p.r = p.r.map(v => Math.min(99, v + 7)); p.ovr = A.calcOvr(p); p.pot = Math.max(p.ovr, p.pot + 7); p.ovh.push([G.year, p.ovr]); });
+    const infl = qbS().filter(p => p.ovr >= 85).length, before = qbs.map(p => [p.id, p.ovr]).sort((a, b) => b[1] - a[1]), others = A.proPlayers(G).filter(p => p.pos === "WR").map(p => p.ovr).join();
+    G.proFix = 0; A.migrate(G);
+    const after = before.map(([id]) => G.players[id].ovr), mono = after.every((v, i) => i === 0 || v <= after[i - 1] + 1);
+    const fixed = qbS().filter(p => p.ovr >= 85).length;
+    ok(fixed < infl && fixed <= 14 && mono && qbs.every(p => p.ovh[p.ovh.length - 1][1] === p.ovr), `talent: re-rating an inflated save takes starting QBs at 85+ from ${infl} to ${fixed}, keeps the order and the rating history in step`);
+    ok(qbs.every(p => p.ovr <= before.find(b => b[0] === p.id)[1]) && qbs.every(p => p.pot >= p.ovr), "talent: re-rating only lowers ratings and keeps ceilings above them");
+    const snap = JSON.stringify(qbs.map(p => p.ovr)); A.migrate(G); ok(JSON.stringify(qbs.map(p => p.ovr)) === snap, "talent: the re-rating never runs twice");
+  },
   rookies(A){
     console.log("\nrookies in year two");
-    const G = A.newGame({ mode: "pro", tid: 0, name: "GM" }); while (G.phase === "reg") A.simWeek(G); let g = 0; while (G.phase === "off" && g++ < 10) A.advanceOff(G);
+    const G = A.newGame({ mode: "pro", tid: 0, name: "GM" });
+    const own = p => p.draft && !p.tx.some(x => /Signed with/.test(x[1])), left = p => 4 - (G.year - p.draft.y), young = () => A.proPlayers(G).filter(p => own(p) && left(p) >= 1);
+    ok(young().length > 300 && young().every(p => p.c.yrs === left(p)), `rookies: a new world has ${young().length} drafted players on the rest of a 4-year rookie deal`);
+    const y0 = young().slice(0, 40); y0.forEach(p => { p.c.yrs = 1; }); G.rcFix = 0; A.migrate(G);
+    ok(y0.every(p => p.c.yrs === left(p)), "rookies: an old save's 1-year rookie deals are repaired once"); y0[0].c.yrs = 1; A.migrate(G); ok(y0[0].c.yrs === 1, "rookies: the contract repair never runs twice"); y0[0].c.yrs = left(y0[0]);
+    while (G.phase === "reg") A.simWeek(G); let g = 0; while (G.phase === "off" && g++ < 10) A.advanceOff(G);
+    const cls = A.proPlayers(G).filter(p => p.draft && p.draft.y === G.year && A.T(G, p.tid).abbr === p.draft.t && !p.tx.some(x => /Released/.test(x[1])));
+    cls.filter(p => p.c.yrs !== 4).slice(0, 4).forEach(p => console.log("BAD", JSON.stringify(p.c), JSON.stringify(p.draft), JSON.stringify(p.tx.slice(-4)), p.expiring, p.opt));
+    ok(cls.length > 150 && cls.every(p => p.c.yrs === 4), `rookies: all ${cls.length} draft picks still with their team are on 4-year deals`);
     while (G.week <= A.PRO_WEEKS) A.simWeek(G);
     const P = G.awards.pro, oroy = G.players[P.list.find(x => /Offensive Rookie/.test(x.a)).pid], droy = G.players[P.list.find(x => /Defensive Rookie/.test(x.a)).pid];
     ok(oroy.draft && oroy.draft.y === G.year && droy.draft && droy.draft.y === G.year, `rookies: both winners were drafted this year (${oroy.pos} pick ${oroy.draft.pk}, ${droy.pos} pick ${droy.draft.pk})`);
@@ -142,9 +176,11 @@ const CHECKS = {
     ok(G.nil && G.nil.budget > 1000 && G.coach.sec != null, `NIL budget $${G.nil && G.nil.budget}K, job security ${G.coach.sec}`);
     const rec = G.players[G.rec[0]], left = G.nil.left; ok(A.nilOffer(G, rec, 300) && G.nil.left === left - 300, "NIL: an offer spends the budget");
     { const ut = A.T(G, G.uid), tgt = G.rec.map(id => G.players[id]).filter(p => A.nilToLead(G, p) > 0 && A.nilToLead(G, p) <= G.nil.left).slice(0, 3); let got = 0; tgt.forEach(p => { A.nilOffer(G, p, A.nilToLead(G, p)); if (p.commit === G.uid) got++; }); ok(tgt.length > 0 && got === tgt.length, `recruiting: paying the Lock price commits the player (${got}/${tgt.length})`); G._commits = tgt.map(p => p.id); }
-    const wi = A.whatIf(G, 20); ok(wi && wi.rows.length >= 11 && wi.dist.reduce((a, b) => a + b, 0) === 20, `what-if: ${wi.rows.length} games replayed, expected wins ${wi.exp.toFixed(1)} vs actual ${wi.actual}`);
+    const wi = A.whatIf(G, 20); ok(wi && wi.rows.length >= 11 && wi.dist.reduce((a, b) => a + b, 0) === 20 && wi.best.w >= wi.worst.w && wi.best.sc.length === wi.rows.length, `what-if: ${wi.rows.length} games replayed, expected wins ${wi.exp.toFixed(1)} vs actual ${wi.actual}, best ${wi.best.w}-${wi.best.l}, worst ${wi.worst.w}-${wi.worst.l}`);
     ok(A.greatestTeams(G, false, 10).length === 10 && A.combineBoard(G).forty.length === 8, "greatest teams and combine boards fill in");
     try { let k = 0; while (G.phase === "off" && k++ < 10) A.advanceOff(G); } catch (e) { err = e; } ok(!err && G.year === 2027, "dynasty: offseason finishes", err && err.stack);
+    { const tm = A.allTimeTeam(G, G.uid), er = A.programEras(G, G.uid); ok(tm.length >= 11 && tm.every(x => x.p && x.yrs >= 1) && Array.isArray(er), `legends: all-time team has ${tm.length} players, ${er.length} eras`); }
+    { const yrs = A.draftClassYears(G), dc = yrs.length && A.draftClassReview(G, yrs[0].y); ok(dc && dc.full && dc.rows.length >= 200 && dc.rows.every(r => r.name && r.rd >= 1) && dc.rows.some(r => r.o0 != null && r.nowRank), `draft class review: ${dc && dc.rows.length} picks, ${dc && dc.active} active, ${dc && dc.steals} steals, ${dc && dc.busts} busts`); }
     ok(G._commits.every(id => G.players[id] && G.players[id].tid === G.uid), "recruiting: every committed recruit signs with you");
     ok(fr.cls === cls0 && fr.rsd === 1, "redshirt: he keeps his year of eligibility");
     const nt = A.takeJob(G, G.pro[3].id); ok(G.mode === "pro" && G.uid === nt.id && G.staff.sc && !G.staff.rc, "jobs: a college coach can take a pro job");

@@ -212,6 +212,13 @@ function settleBowls(G, w){
     if (isUser(G, win.id) || isUser(G, lose.id)) news(G, `${g.tag}: ${win.name} ${Math.max(g.hs, g.as)}, ${lose.name} ${Math.min(g.hs, g.as)}.`, "post", win.id);
   });
 }
+// A program's historical level: the prestige it was created with (looked up from the data for older saves).
+let _basePr = null;
+function basePrestige(t){
+  if (t.pr0 != null) return t.pr0;
+  if (!_basePr) { _basePr = {}; Object.values(CONFS).forEach(c => c.teams.split(";").forEach(r => { const f = r.split("|"); _basePr[f[2]] = +f[3]; })); }
+  return (t.pr0 = _basePr[t.abbr] != null ? _basePr[t.abbr] : round(t.prestige));
+}
 function finishCollegeSeason(G){
   const fg = gameById(G, G.cfp.final), champ = T(G, winnerOf(fg)), ru = T(G, loserOf(fg));
   G.cfp.champ = champ.id; champ.titles++; champ._post = "National Champions"; ru._post = "National runner-up";
@@ -224,7 +231,11 @@ function finishCollegeSeason(G){
   G.col.forEach(t => {
     t.hist.push({ y: G.year, w: t.w, l: t.l, cw: t.cw, cl: t.cl, rk: t.rank, post: t._post || (t.w >= 6 ? "" : ""), cc: G.confs[t.conf].champ === t.id ? 1 : 0, coach: t.coach.name, pf: t.pf, pa: t.pa, pr: round(t.prestige) });
     // Prestige drifts toward how the program is actually doing.
-    const exp = (t.prestige - 45) / 52 * .66 + .19, d = (winPct(t) - exp) * 6 + (t.rank && t.rank <= 10 ? .5 : 0) + (t === champ ? 2 : 0) + (G.confs[t.conf].champ === t.id ? .7 : 0) - Math.max(0, t.prestige - 90) * .12;
+    // What counts as a good year depends on who was on the schedule: 10-2 in a small league is expected
+    // of a decent program, 8-4 in the toughest one is not a failure. Each program is also pulled back toward
+    // its historical level (pr0), so small schools can rise for a while but the sport's pecking order holds.
+    const sosP = t.res.length ? avgOf(t.res, r => r[0] < 0 ? 38 : T(G, r[0]).prestige, 68) : 68, exp = clamp(.5 + (t.prestige - sosP) * .0127, .12, .9);
+    const d = (winPct(t) - exp) * 6 + (t.rank && t.rank <= 10 ? .5 : 0) + (t === champ ? 2 : 0) + (G.confs[t.conf].champ === t.id ? .7 : 0) - Math.max(0, t.prestige - 90) * .12 - (t.prestige - basePrestige(t)) * (isUser(G, t.id) ? .03 : .1);
     t.prestige = clamp(round((t.prestige + clamp(d, -3, 4)) * 10) / 10, 30, 99);
     delete t._post; delete t.postBonus;
   });
@@ -262,6 +273,7 @@ function finishProSeason(G){
   news(G, `${tname(champ)} win Pocket Bowl ${ROMAN(G.year - 1965)}, ${Math.max(fg.hs, fg.as)}–${Math.min(fg.hs, fg.as)} over the ${ru.nick}.${mvp ? " MVP: " + pname(mvp) + "." : ""}`, "champ", champ.id);
   const depth = {}; G.pp.rounds.forEach((r, i) => r.forEach(id => { const g = gameById(G, id); depth[loserOf(g)] = ["Lost Wild Card", "Lost Divisional", "Lost Conf. Championship", "Lost Pocket Bowl"][i]; }));
   G.pro.forEach(t => t.hist.push({ y: G.year, w: t.w, l: t.l, post: t === champ ? "Won Pocket Bowl" : depth[t.id] || "", coach: t.coach.name, pf: t.pf, pa: t.pa }));
+  rosterOf(G, champ.id).forEach(p => { if (!(p.st.g > 0)) (p.rg = p.rg || []).push([G.year, "P", champ.id]); });
   const h = seasonHist(G); h.proChamp = champ.id; h.proRU = ru.id; h.proScore = [Math.max(fg.hs, fg.as), Math.min(fg.hs, fg.as)]; h.pbMvp = mvp ? [mvp.id, pname(mvp), mvp.pos] : null;
   if (G.mode === "pro") { const t = userTeam(G), row = t.hist[t.hist.length - 1]; G.coach.hist.push({ y: G.year, tid: t.id, w: t.w, l: t.l, note: row.post }); G.coach.w += t.w; G.coach.l += t.l; }
 }

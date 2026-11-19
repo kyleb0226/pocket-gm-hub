@@ -186,6 +186,18 @@ function proAwards(G){
 const REC_KEYS = [["py","Passing yards"],["ptd","Passing TD"],["ry","Rushing yards"],["rtd","Rushing TD"],["rec","Receptions"],["rcy","Receiving yards"],["rctd","Receiving TD"],["tk","Tackles"],["sck","Sacks"],["int","Interceptions"],["fgm","Field goals"]];
 function careerTotals(p, lvl){ const o = {}; p.hist.forEach(r => { if (r.lvl !== lvl) return; STAT_KEYS.concat(["g", "gs"]).forEach(k => { if (r[k]) o[k] = (o[k] || 0) + r[k]; }); }); return o; }
 // Close the books on a season: stamp league leaders, push the history row, update records.
+// Championship rings: one for every title a player's team won while he was on it. Derived from the
+// season history, so old saves get them too; p.rg only covers pros who never got into a game that year.
+function ringsOf(G, p){
+  const out = [], seen = {}, add = (y, lvl, tid) => { const k = y + lvl; if (seen[k]) return; seen[k] = 1; out.push({ y, lvl, tid }); };
+  (G.hist || []).forEach(h => {
+    const rows = p.hist.filter(r => r.y === h.y);
+    rows.forEach(r => { if (r.lvl === "C" && r.tid === h.natChamp) add(h.y, "C", r.tid); if (r.lvl === "P" && r.tid === h.proChamp) add(h.y, "P", r.tid); });
+    if (!rows.length && h.y === G.year && G.phase !== "off" && p.tid != null && !p.ret) { if (p.tid === h.natChamp) add(h.y, "C", p.tid); if (p.tid === h.proChamp) add(h.y, "P", p.tid); }
+  });
+  (p.rg || []).forEach(r => add(r[0], r[1], r[2]));
+  return out.sort((a, b) => a.y - b.y);
+}
 function archiveStats(G){
   [["C", colPlayers(G), G.records.col, G.records.colCareer], ["P", proPlayers(G), G.records.pro, G.records.proCareer]].forEach(([lvl, pool, seasonRec, careerRec]) => {
     const lead = {}; REC_KEYS.forEach(([k]) => { let b = null; pool.forEach(p => { if ((p.st[k] || 0) > (b ? b.st[k] : 0)) b = p; }); if (b) (lead[b.id] || (lead[b.id] = [])).push(k); });

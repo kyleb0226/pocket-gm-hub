@@ -69,7 +69,7 @@ function buildCollege(G){
     const c = CONFS[cid]; G.confs[cid] = { id: cid, name: c.name, full: c.full, games: c.games, champs: [] };
     c.teams.split(";").forEach(row => {
       const [name, nick, abbr, pr, c1, c2, st] = row.split("|"), id = 100 + G.col.length;
-      G.col.push({ id, name, nick, abbr, conf: cid, prestige: +pr, c1, c2, state: st, w: 0, l: 0, cw: 0, cl: 0, pf: 0, pa: 0, res: [], rank: 0, rkAll: 0, rkHist: [], pw: 0, morale: 0,
+      G.col.push({ id, name, nick, abbr, conf: cid, prestige: +pr, pr0: +pr, c1, c2, state: st, w: 0, l: 0, cw: 0, cl: 0, pf: 0, pa: 0, res: [], rank: 0, rkAll: 0, rkHist: [], pw: 0, morale: 0,
         hist: [], titles: 0, confTitles: 0, bowlW: 0, bowlL: 0, heismans: 0, allAm: 0, picks: 0, allW: 0, allL: 0 });
     });
   });
@@ -99,7 +99,8 @@ function salaryFor(p){
 function buildProRoster(G, t){
   const cols = G.col;
   POS.forEach(pos => { for (let i = 0; i < PRO_NEED[pos]; i++) {
-    const depth = i / STARTERS[pos], target = gauss(depth < 1 ? 84 : depth < 2 ? 74 : 67, depth < 1 ? 5.5 : 4);
+    // Starting quarterbacks spread wider than other starters: a handful of elite ones, plenty who aren't.
+    const depth = i / STARTERS[pos], qb1 = pos === "QB" && depth < 1, target = gauss(qb1 ? 80 : depth < 1 ? 84 : depth < 2 ? 74 : 67, qb1 ? 6.5 : depth < 1 ? 5.5 : 4);
     const age = clamp(round(gauss(depth < 1 ? 27 : 25, 2.8)), 22, 36), p = makePlayer(G, pos, target, age);
     p.tid = t.id; p.exp = Math.max(0, age - 22 - rint(0, 1)); p.col = wpick(cols.map(c => [c.id, c.prestige * c.prestige]));
     p.c = { amt: salaryFor(p), yrs: rint(1, 4) }; p.stars = clamp(round((p.ovr - 56) / 8), 1, 5);
@@ -113,6 +114,8 @@ function buildProRoster(G, t){
       p.hist.push(Object.assign({ y: G.year - k, lvl: "P", t: ht.abbr, tid: ht.id, age: age - k }, fakeLine(pos, o, rint(12, 17), st))); }
     if (prevT) p.tx.push([G.year - movedAt, `Signed with the ${t.nick}`]);
     if (chance(.8)) { const pk = clamp(round((92 - p.ovr) * 9 + gauss(0, 30)), 1, 224); p.draft = { y: draftY, rd: Math.ceil(pk / 32), pk, t: first.abbr }; }
+    // A drafted player still with his first team is on what is left of his four-year rookie deal.
+    if (p.draft && !prevT && proY <= 3) p.c.yrs = 4 - proY;
     p.ovh.push([G.year - 1, p.ovr]);
     G.players[p.id] = p;
   } });
@@ -122,7 +125,7 @@ function makeCoach(G, q){ return { name: pick(FIRST) + " " + pick(LAST), age: ri
 function newGame(o = {}){
   const seed = o.seed != null && o.seed !== "" ? (isNaN(+o.seed) ? hashSeed(o.seed) : +o.seed) : null;
   if (seed != null) _rng = mulberry32(seed);
-  const G = { v: 1, year: 2026, week: 0, phase: "pre", offStep: 0, mode: o.mode || "college", uid: null, pid: 0, players: {}, news: [], hist: [], lp: 5,
+  const G = { v: 1, proFix: 1, rcFix: 1, prFix: 1, year: 2026, week: 0, phase: "pre", offStep: 0, mode: o.mode || "college", uid: null, pid: 0, players: {}, news: [], hist: [], lp: 5,
     coach: { name: o.name || "Coach", hist: [], aw: [], w: 0, l: 0 }, picks: {}, pickRec: { w: 0, l: 0, streak: 0, best: 0 }, preds: {}, events: [], usedEv: [], perks: {},
     scouted: {}, pitches: {}, records: { col: {}, pro: {}, colCareer: {}, proCareer: {} }, hof: [], colHof: [], legends: {}, seed };
   buildCollege(G); buildPro(G);

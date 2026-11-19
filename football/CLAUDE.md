@@ -27,7 +27,7 @@ filename order (the game still ships as one file like the other Pocket GM games)
 ## Test
 
 ```bash
-node tools/simtest.js        # 80 engine checks (assembles first)
+node tools/simtest.js        # 112 engine checks (assembles first)
 node tools/audit.js 10       # long sim; prints per-year numbers + FLAGS to eyeball
 ```
 
@@ -51,3 +51,7 @@ pro rosters shrinking, prestige pinning at 99, RB-only Heismans.
 - Recruits commit (`p.commit`) once the user leads by 4 pull; signing day honours it. `nilToLead` is the exact Lock price shown in the UI.
 - Award ballots live in `G.awards.{pro,col}.votes`; `backfillVotes` / `redoRookies` (one-time, `rkFix`) repair older saves in `migrate`.
 - After `node build.js` the preview server on :8150 must be restarted (build deletes `dist/`).
+- Prestige is anchored: `t.pr0` is a program's historical level (`basePrestige`), and `finishCollegeSeason` pulls prestige back toward it while judging the record against the schedule's prestige. Don't remove the pull — without it small-conference schools reach the 90s in 20 years. `audit.js` prints the drift.
+- Championship rings are derived (`ringsOf`), not saved, except `p.rg` for pros with no games that year.
+- Pro talent is held steady by `toProScale` (`PRO_SCALE` in 05-offseason): a college star becomes a mid-70s rookie and gets a fresh pro ceiling (QBs lower and more boom-or-bust). College potential runs 90+ for most prospects, so never carry it straight over — that made the league better every year (30 of 32 starting QBs 85+ by year 8). World-gen starting QBs are wider than other starters (80 ± 6.5). Check any change with a 15–20 year sim: starting QBs at 85+ should stay roughly 5–15.
+- `rerateProLeague` (one-time, `G.proFix`) re-rated older saves onto `PRO_REF` (per-position percentiles of a fresh league). If world gen changes, regenerate `PRO_REF` from new worlds.

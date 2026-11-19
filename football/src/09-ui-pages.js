@@ -16,6 +16,20 @@ function Modal({ children, onClose, wide, accent }){
 }
 
 /* ----------------------------- player page ----------------------------- */
+// A championship ring in the winning team's colour: gold band, team-colour stone, the year underneath.
+function ChampRing({ G, r }){
+  const t = T(G, r.tid) || {}, c = t.c1 || "#64748b", pro = r.lvl === "P", what = pro ? "Pocket Bowl champion" : "National champion";
+  return (<div className="flex flex-col items-center pop" title={`${r.y} ${what} — ${t.pro ? t.city + " " + t.nick : t.name || ""}`}>
+    <svg width="34" height="34" viewBox="0 0 34 34" role="img" aria-label={`${r.y} ${what} ring`}>
+      <ellipse cx="17" cy="21" rx="10.5" ry="9.5" fill="none" stroke={pro ? "#f5c84b" : "#d9dee6"} strokeWidth="3.6" />
+      <ellipse cx="17" cy="21" rx="10.5" ry="9.5" fill="none" stroke="#000" strokeOpacity=".22" strokeWidth="1" />
+      <path d="M9.5 10.5 L12.5 5.5 H21.5 L24.5 10.5 L17 16.5 Z" fill={c} stroke={pro ? "#fde68a" : "#f1f5f9"} strokeWidth="1.3" strokeLinejoin="round" />
+      <path d="M12.5 5.5 L17 10.5 L21.5 5.5 M9.5 10.5 H24.5 M17 10.5 V16.5" stroke="#fff" strokeOpacity=".55" strokeWidth=".8" fill="none" />
+    </svg>
+    <div className="text-[10px] font-bold leading-none mt-0.5" style={{ color: pro ? "#fcd34d" : "#e2e8f0" }}>{r.y}</div>
+    <div className="text-[8px] uppercase tracking-wider text-slate-400 leading-tight">{pro ? "Pocket Bowl" : "Natl title"}</div>
+  </div>);
+}
 function PlayerPage({ pid, onClose }){
   const ui = useUI(), G = ui.G, p = G.players[pid]; if (!p) return null;
   const t = T(G, p.tid), ct = p.col != null ? T(G, p.col) : (t && !t.pro ? t : null), grp = GROUP(p.pos), sv = seen(G, p), inCol = t && !t.pro, pro = p.exp != null;
@@ -27,6 +41,7 @@ function PlayerPage({ pid, onClose }){
   const status = p.ret ? `Retired ${p.ret}` : p.recruit ? "High school recruit" : p.dcl ? "Draft prospect" : p.fa ? "Free agent" : p.inj ? `Injured — out ${p.inj} wk` : p.portal ? "In the transfer portal" : "Active";
   const colHist = p.hist.filter(r => r.lvl === "C"), years = p.aw.reduce((m, a) => ((m[a[0]] || (m[a[0]] = [])).push(a), m), {});
   const canScout = !sv.exact && G.lp >= 1;
+  const rings = ringsOf(G, p);
   return (
     <Modal onClose={onClose} wide accent={[tc.c1, tc.c2]}>
       {/* header */}
@@ -50,6 +65,7 @@ function PlayerPage({ pid, onClose }){
               {p.c && <span>Contract: <b className="text-slate-100">{money(p.c.amt)}</b> × {p.c.yrs} yr</span>}
               {!pro && <span>GPA {p.gpa.toFixed(2)}</span>}
             </div>
+            {rings.length > 0 && <div className="flex flex-wrap gap-2 mt-2.5">{rings.map((r, i) => <ChampRing key={i} G={G} r={r} />)}</div>}
           </div>
           <div className="flex gap-2 shrink-0 mr-8"><Ring v={sv.ovr} label={sv.exact ? "OVR" : "OVR?"} /><Ring v={sv.pot} label={sv.exact ? "POT" : "POT?"} color="#a78bfa" /></div>
         </div>

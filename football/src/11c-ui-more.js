@@ -153,22 +153,73 @@ function AllStarCard(){
 
 /* ----------------------------- what if? ----------------------------- */
 function WhatIf(){
-  const ui = useUI(), G = ui.G, [res, setRes] = useState(null), [busy, setBusy] = useState(false), t = userTeam(G);
+  const ui = useUI(), G = ui.G, [res, setRes] = useState(null), [busy, setBusy] = useState(false), [n, setN] = useState(150), [custom, setCustom] = useState(""), t = userTeam(G);
   const played = [...G.cs, ...G.ps].filter(g => g.done && !g.post && (g.h === G.uid || g.a === G.uid)).length;
-  const run = () => { setBusy(true); setTimeout(() => { setRes(whatIf(G, 150)); setBusy(false); }, 30); };
-  if (!played) return <Card><Empty>Play some games first. Then this replays your season 150 times to show how much was skill and how much was luck.</Empty></Card>;
+  const run = () => { setBusy(true); setTimeout(() => { setRes(whatIf(G, n)); setBusy(false); }, 60); };
+  const pick = v => { const x = Math.max(10, Math.min(5000, Math.round(+v) || 0)); setCustom(v); if (x >= 10) setN(x); };
+  if (!played) return <Card><Empty>Play some games first. Then this replays your season hundreds of times to show how much was skill and how much was luck.</Empty></Card>;
   const max = res ? Math.max(...res.dist) : 1, luck = res ? res.actual - res.exp : 0;
   return (<div className="space-y-3">
     <Card title={`What if? · ${G.year} ${t.pro ? t.nick : t.name}`} right={played + " regular-season games played"}>
-      <div className="text-sm text-slate-300">Replays every game you've played 150 times with today's roster. Nothing in your save changes.</div>
-      <div className="mt-3"><Btn kind="pri" disabled={busy} onClick={run}>{busy ? "Replaying…" : res ? "Run it again" : "Replay my season 150 times"}</Btn></div></Card>
+      <div className="text-sm text-slate-300">Replays every game you've played with today's roster, as many times as you choose. Nothing in your save changes.</div>
+      <div className="flex flex-wrap items-center gap-1.5 mt-3">{[150, 500, 1000, 2500].map(v => <button key={v} onClick={() => { setN(v); setCustom(""); }} className={cx("px-2.5 py-1 rounded-lg text-xs font-semibold", n === v && !custom ? "bg-acc text-slate-950" : "bg-white/5 text-slate-300")}>{v.toLocaleString()}</button>)}
+        <input value={custom} onChange={e => pick(e.target.value)} inputMode="numeric" placeholder="Custom (10–5000)" className="w-36 bg-[#0b111e] border border-[#26324f] rounded-lg px-2 py-1 text-xs" /></div>
+      <div className="mt-3"><Btn kind="pri" disabled={busy} onClick={run}>{busy ? `Replaying ${n.toLocaleString()} seasons…` : res ? `Run ${n.toLocaleString()} again` : `Replay my season ${n.toLocaleString()} times`}</Btn></div></Card>
     {res && <React.Fragment>
+      <div className="grid sm:grid-cols-2 gap-2">{[["Best season", res.best, "#4ade80", res.bestCount], ["Worst season", res.worst, "#f87171", res.worstCount]].map(([l, s, c, cnt]) => <div key={l} className="card p-3"><div className="text-[10px] uppercase tracking-widest text-slate-500">{l} of {res.n.toLocaleString()}</div><div className="disp text-3xl" style={{ color: c }}>{s.w}–{s.l}</div><div className="text-xs text-slate-400">Replay #{s.k} · scored {s.pf}, allowed {s.pa} ({s.pf - s.pa > 0 ? "+" : ""}{s.pf - s.pa}) · {cnt} replay{cnt === 1 ? "" : "s"} ended {s.w}–{s.l}</div><div className="flex flex-wrap gap-1 mt-2">{s.sc.map(([a, b], i) => <span key={i} title={res.rows[i] ? "Wk " + res.rows[i].w : ""} className={cx("px-1.5 py-0.5 rounded text-[10px] tnum", a > b ? "bg-emerald-500/15 text-emerald-300" : "bg-rose-500/15 text-rose-300")}>{a > b ? "W" : "L"} {a}–{b}</span>)}</div></div>)}</div>
       <div className="grid sm:grid-cols-4 gap-2">{[["Actual wins", res.actual, "#e2e8f0"], ["Expected wins", res.exp.toFixed(1), "#38bdf8"], [luck >= 0 ? "Luck (wins above expected)" : "Luck (wins below expected)", (luck >= 0 ? "+" : "") + luck.toFixed(1), luck >= 0 ? "#4ade80" : "#f87171"], ["Unbeaten in", round(res.perfect * 100) + "% of replays", "#facc15"]].map(([l, v, c]) => <div key={l} className="card p-3 text-center"><div className="disp text-2xl" style={{ color: c }}>{v}</div><div className="text-[10px] text-slate-400">{l}</div></div>)}</div>
       <Card title="How the season usually goes" right={`you did better than ${round(res.worse * 100)}% of replays`}>
         <div className="flex items-end gap-1 h-36">{res.dist.map((n, w) => <div key={w} className="flex-1 h-full flex flex-col justify-end items-center"><div className="text-[8px] text-slate-400">{n ? round(n / res.n * 100) + "%" : ""}</div><div className="w-full rounded-t growY" style={{ height: n / max * 84 + "%", background: w === res.actual ? "#facc15" : "var(--acc)", opacity: w === res.actual ? 1 : .55, animationDelay: w * 25 + "ms" }} /></div>)}</div>
         <div className="flex gap-1 mt-1">{res.dist.map((_, w) => <div key={w} className={cx("flex-1 text-center text-[9px]", w === res.actual ? "text-amber-300 font-bold" : "text-slate-500")}>{w}</div>)}</div><div className="text-[10px] text-slate-500 text-center mt-1">wins · gold is what really happened</div></Card>
       <Card title="Game by game" pad={false}><table className="st tnum"><thead><tr><th className="l">Wk</th><th className="l">Opponent</th><th className="l">Result</th><th className="l w-1/3">Win chance</th><th>Avg score</th></tr></thead><tbody>{res.rows.map(r => <tr key={r.gid} className="cursor-pointer hover:bg-white/5" onClick={() => ui.openGame(r.gid)}><td className="l text-slate-500">{r.w}</td><td className="l">{r.home ? "vs " : "@ "}<TeamLink t={r.opp} /></td><td className={cx("l font-semibold", r.won ? "text-emerald-400" : "text-rose-400")}>{r.won ? "W" : "L"} {r.us}–{r.them}{r.won && r.p < .35 ? <span className="ml-1.5 text-[9px] text-amber-300">STOLE IT</span> : !r.won && r.p > .65 ? <span className="ml-1.5 text-[9px] text-rose-300">LET ONE SLIP</span> : null}</td><td className="l"><div className="flex items-center gap-2"><div className="flex-1"><HBar v={r.p * 100} max={100} color={r.p >= .5 ? "#4ade80" : "#f87171"} h={6} /></div><span className="w-8 text-right text-xs">{round(r.p * 100)}%</span></div></td><td className="text-slate-400">{round(r.pf)}–{round(r.pa)}</td></tr>)}</tbody></table></Card>
     </React.Fragment>}
+  </div>);
+}
+
+/* ----------------------------- draft class review ----------------------------- */
+const dcHead = (r, p) => { const o = r.pro, g = GROUP(r.pos); if (!o.g) return "—"; const f = n => (n || 0).toLocaleString();
+  return g === "QB" ? `${f(o.py)} yds · ${o.ptd || 0} TD · ${o.pi || 0} int` : r.pos === "RB" ? `${f(o.ry)} rush · ${o.rtd || 0} TD` : r.pos === "WR" || r.pos === "TE" ? `${o.rec || 0} rec · ${f(o.rcy)} yds · ${o.rctd || 0} TD` : g === "OL" ? `${o.gs || 0} starts` : g === "KP" ? (r.pos === "K" ? `${o.fgm || 0}/${o.fga || 0} FG` : `${o.pu || 0} punts`) : `${o.tk || 0} tkl · ${o.sck || 0} sck · ${o.int || 0} int`; };
+function DraftClasses(){
+  const ui = useUI(), G = ui.G, yrs = useMemo(() => draftClassYears(G), [G.year, G.phase]), [y, setY] = useState(yrs.length ? yrs[0].y : null), [flt, setFlt] = useState("all"), [sort, setSort] = useState("pk");
+  const dc = useMemo(() => y != null ? draftClassReview(G, y) : null, [y, G.year, G.phase, G.week]);
+  if (!yrs.length) return <Card><Empty>No draft has been run yet. Finish the first draft and every class is tracked here.</Empty></Card>;
+  if (!dc) return null;
+  const mine = r => r.col === G.uid || r.tid === G.uid, shown = dc.rows.filter(r => flt === "all" || (flt === "r1" && r.rd === 1) || (flt === "mine" && mine(r)) || (flt === "steal" && r.tag === "STEAL") || (flt === "bust" && r.tag === "BUST"))
+    .slice().sort((a, b) => sort === "now" ? (a.nowRank || 999) - (b.nowRank || 999) : sort === "move" ? (b.v || -99) - (a.v || -99) : a.pk - b.pk);
+  const top = dc.rows.filter(r => r.nowRank).sort((a, b) => a.nowRank - b.nowRank).slice(0, 3);
+  const chip = (k, l) => <button key={k} onClick={() => setFlt(k)} className={cx("px-2 py-0.5 rounded text-[11px] font-semibold", flt === k ? "bg-acc text-slate-950" : "text-slate-400")}>{l}</button>;
+  return (<div className="space-y-3">
+    <SubTabs tabs={yrs.map(x => [x.y, x.y + " draft"])} value={y} onChange={v => setY(+v)} />
+    <div className="grid sm:grid-cols-4 gap-2">{[["Picks", dc.rows.length, "#e2e8f0"], ["Still playing", dc.active, "#38bdf8"], ["Steals", dc.steals, "#4ade80"], ["Busts", dc.busts, "#f87171"]].map(([l, v, c]) => <div key={l} className="card p-3 text-center"><div className="disp text-2xl" style={{ color: c }}>{v}</div><div className="text-[10px] text-slate-400">{l}</div></div>)}</div>
+    {top.length > 0 && <div className="text-xs text-slate-400">Best of the class right now: {top.map((r, i) => <span key={r.pid}>{i ? " · " : ""}<PLink pid={r.pid} name={r.name} /> <span className="text-slate-500">({r.pos}, No. {r.pk})</span></span>)}</div>}
+    <Card title={`${dc.y} draft class`} right={<span className="inline-flex gap-1">{chip("all", "All")}{chip("r1", "Round 1")}{chip("mine", "Mine")}{chip("steal", "Steals")}{chip("bust", "Busts")}</span>} pad={false}>
+      <div className="overflow-x-auto"><table className="st tnum"><thead><tr><th className="l cursor-pointer" onClick={() => setSort("pk")}>Pick</th><th className="l">Player</th><th className="l">Drafted by</th><th>Board</th><th>Draft day</th><th className="cursor-pointer" onClick={() => setSort("now")}>Now</th><th className="cursor-pointer" onClick={() => setSort("move")}>Class rank</th><th className="l">Pro totals</th><th className="l">Status</th></tr></thead><tbody>{shown.map(r => { const t = T(G, r.tid), ct = r.col != null ? T(G, r.col) : null, cur = r.curTid != null ? T(G, r.curTid) : null;
+        return <tr key={r.pid} className={cx("cursor-pointer hover:bg-white/5", mine(r) && "bg-white/5")} onClick={() => !r.gone && ui.openPlayer(r.pid)}>
+          <td className={cx("l disp", r.pk <= 3 ? "text-amber-300" : "text-slate-400")}>{r.pk}<span className="text-[9px] text-slate-600 ml-1">R{r.rd}</span></td>
+          <td className="l"><div className="font-semibold"><PLink pid={r.pid} name={r.name} /></div><div className="text-[10px] text-slate-500">{r.pos}{ct ? " · " + ct.name : ""}{r.stars ? " · " : ""}{r.stars ? <Stars n={r.stars} /> : null}</div></td>
+          <td className="l">{t ? <TeamLink t={t} /> : "—"}</td>
+          <td className="text-slate-400">{r.cons ? "#" + r.cons : "—"}</td>
+          <td>{r.o0 != null ? <Ovr v={r.o0} /> : <span className="text-slate-600">—</span>}</td>
+          <td>{r.now != null ? <span><Ovr v={r.now} />{r.o0 != null && r.now !== r.o0 && <span className={cx("text-[10px] ml-1", r.now > r.o0 ? "text-emerald-400" : "text-rose-400")}>{r.now > r.o0 ? "▲" : "▼"}{Math.abs(r.now - r.o0)}</span>}</span> : "—"}</td>
+          <td>{r.nowRank ? <span className="font-bold">#{r.nowRank}</span> : "—"}{r.tag && <span className={cx("ml-1 text-[9px] font-bold", r.tag === "STEAL" ? "text-emerald-300" : "text-rose-300")}>{r.tag}</span>}</td>
+          <td className="l text-xs text-slate-300">{dcHead(r)}{r.pro.g ? <span className="text-slate-600"> · {r.pro.g} G</span> : ""}{r.aw ? <span className="text-amber-300 ml-1">🏅{r.aw}</span> : ""}{r.rings ? <span className="ml-1">🏆{r.rings}</span> : ""}</td>
+          <td className="l text-xs">{r.gone ? <span className="text-slate-600">out of the league</span> : r.ret ? <span className="text-slate-500">Retired {r.ret}</span> : cur ? <span>{cur.abbr}{cur.id !== r.tid && <span className="text-slate-500"> (moved)</span>}</span> : <span className="text-slate-400">Free agent</span>}</td></tr>; })}</tbody></table></div>
+      <div className="px-4 py-2 text-[11px] text-slate-500">Board = consensus rank before the draft. Class rank = where he sits among this class by current rating; a steal outplays his slot, a bust doesn't.{!dc.full && " This draft was saved before full classes were tracked, so only round 1 is on file."} Click any player for the full page.</div></Card>
+  </div>);
+}
+
+/* ----------------------------- program legends ----------------------------- */
+function ProgramLegends(){
+  const ui = useUI(), G = ui.G, t = userTeam(G), tm = useMemo(() => allTimeTeam(G, G.uid), [G.year, G.phase]), eras = useMemo(() => programEras(G, G.uid), [G.year, G.phase]);
+  const side = pos => tm.filter(x => ["QB","RB","WR","TE","OT","OG","C"].includes(x.pos) === (pos === "O"));
+  const col = (title, list) => <Card title={title} pad={false}><table className="st tnum"><tbody>{list.map(x => <tr key={x.p.id} className="cursor-pointer hover:bg-white/5" onClick={() => ui.openPlayer(x.p.id)}><td className="l w-10 text-slate-500 font-bold">{x.pos}</td><td className="l"><PLink p={x.p} />{x.p.hof || x.p.chof ? <span className="text-amber-300 ml-1">★</span> : null}</td><td className="text-slate-400 text-xs">{x.yrs} yr{x.yrs === 1 ? "" : "s"}</td><td className="text-slate-400 text-xs">{x.aw ? "🏅" + x.aw : ""}</td><td><Ovr v={seen(G, x.p).ovr} /></td></tr>)}</tbody></table></Card>;
+  return (<div className="space-y-3">
+    <Card title={`${t.pro ? t.nick : t.name} · eras`} right="3+ seasons in a row">
+      {eras.length ? <div className="space-y-2">{eras.map((e, i) => <div key={i} className="flex items-center gap-3 rounded-xl px-3 py-2" style={{ background: e.kind === "dynasty" ? "rgba(74,222,128,.08)" : "rgba(248,113,113,.08)" }}>
+        <div className="disp text-lg w-28" style={{ color: e.kind === "dynasty" ? "#4ade80" : "#f87171" }}>{e.from === e.to ? e.from : e.from + "–" + e.to}</div>
+        <div className="flex-1"><div className="text-sm font-semibold">{e.kind === "dynasty" ? "Golden era" : "Rough stretch"} · {e.w}–{e.l}{e.titles ? <span className="text-amber-300"> · 🏆 {e.titles}</span> : null}</div><div className="text-[11px] text-slate-500">{e.coaches.join(", ")}</div></div></div>)}</div> : <Empty>No stretch of three great or rough seasons in a row yet. Eras appear as the years pile up.</Empty>}</Card>
+    {tm.length ? <div className="grid md:grid-cols-2 gap-3">{col("All-time offense", side("O"))}{col("All-time defense & kicking", side("D"))}</div> : <Card><Empty>Nobody has played for you yet — the all-time team fills in as seasons are played.</Empty></Card>}
+    <div className="text-[11px] text-slate-500">Ranked on awards, seasons in your colours, games played and rating. Click anyone to open their page.</div>
   </div>);
 }
 

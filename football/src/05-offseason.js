@@ -111,8 +111,8 @@ function fillProRosters(G, includeUser){
     POS.forEach(pos => {
       let have = rosterOf(G, t.id).filter(p => p.pos === pos);
       while (have.length < PRO_NEED[pos]) { let p = freeAgents(G).find(x => x.pos === pos); if (!p) { p = addP(G, makePlayer(G, pos, gauss(63, 3), rint(22, 25))); p.exp = 0; p.fa = 1; }
-        p.c = { amt: Math.min(askOf(G, p), Math.max(.9, capRoom(G, t.id) / 4)), yrs: 1 }; delete p.fa; moveP(G, p, t.id); if (p.exp == null) p.exp = 0; p.tx.push([G.year, `Signed with the ${t.nick}`]); have.push(p);
-        if (user) news(G, `Roster filled: ${pos} ${pname(p)} (${p.ovr}) signs a one-year deal.`, "fa", t.id); }
+        p.c = { amt: Math.min(askOf(G, p), Math.max(.9, capRoom(G, t.id) / 4)), yrs: p.exp === 0 && !p.draft ? 3 : 1 }; delete p.fa; moveP(G, p, t.id); if (p.exp == null) p.exp = 0; p.tx.push([G.year, `Signed with the ${t.nick}`]); have.push(p);
+        if (user) news(G, `Roster filled: ${pos} ${pname(p)} (${p.ovr}) signs a ${p.c.yrs === 3 ? "three" : "one"}-year deal.`, "fa", t.id); }
       if (!user) have.sort((a, b) => b.ovr + (b.draft && b.draft.y === G.year ? 6 : 0) - a.ovr - (a.draft && a.draft.y === G.year ? 6 : 0)).slice(PRO_NEED[pos] + 1).forEach(p => releaseP(G, p));
     });
   });
@@ -122,16 +122,48 @@ function fillProRosters(G, includeUser){
 /* --- the draft --- */
 // College ratings are measured against college players. The day a player turns pro he is
 // re-rated on the pro scale, so a 95 in college is a promising rookie, not an instant All-Pro.
-const proProj = v => round(48 + (v - 48) * .76);
+// A top college player becomes a promising rookie, not a ready-made Pro Bowler: a college 92 is a
+// mid-70s pro. College potential runs high (most draft prospects are 90+), so the pro ceiling is set
+// fresh from how good he is now, how far he still had to grow and how young he is, plus luck. That
+// keeps each draft class to a handful of future stars, so the league doesn't get better every year.
+const PRO_SCALE = { a: 40, b: .8, head: 7, gap: .5, age: 1.5, sd: 7, QB: { head: 2, sd: 6 } };
+const proProj = v => round(PRO_SCALE.a + (v - 48) * PRO_SCALE.b);
 function toProScale(p){
-  if (p.proScaled) return; const pot0 = p.pot, d = p.ovr - proProj(p.ovr);
-  p.colPeak = p.ovr; p.r = p.r.map(v => clamp(v - d, 25, 99)); p.ovr = calcOvr(p); p.pot = clamp(Math.max(p.ovr, round(52 + (pot0 - 52) * .84)), p.ovr, 99); p.proScaled = 1;
+  if (p.proScaled) return; const S = PRO_SCALE, pot0 = p.pot, ovr0 = p.ovr, d = p.ovr - proProj(p.ovr);
+  p.colPeak = p.ovr; p.r = p.r.map(v => clamp(v - d, 25, 99)); p.ovr = calcOvr(p);
+  // Quarterback is the hardest position to project: a lower ceiling on average, and more boom or bust.
+  const X = Object.assign({}, S, S[p.pos] || {});
+  p.pot = clamp(round(p.ovr + X.head + Math.max(0, pot0 - ovr0) * X.gap + (22 - p.age) * X.age + gauss(0, X.sd)), p.ovr, 97); p.proScaled = 1;
+}
+// One-time repair (Nov 2026). Older worlds turned college stars into ready-made pros and gave most
+// draft picks a 91 ceiling, so the pro league got better every year — quarterbacks most visibly.
+// Re-rate every pro and free agent once, position by position, onto the spread of a freshly built
+// league (percentiles below, measured from 12 new worlds). Ratings only ever come down, everyone keeps
+// his place in the pecking order, and rating history moves with him so career charts stay smooth.
+const PRO_REF_Q = [0, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 98, 100];
+const PRO_REF = {QB: [58.2, 62.9, 64.6, 67.1, 69.3, 71.3, 73.7, 75.2, 77.1, 79.3, 83.8, 86.7, 90.0, 94.0], RB: [56.6, 61.8, 63.7, 65.7, 67.8, 69.4, 71.4, 73.7, 76.3, 80.6, 85.4, 88.4, 90.6, 95.2], WR: [64.3, 69.3, 70.7, 72.9, 74.7, 76.6, 78.5, 80.3, 83.0, 85.5, 88.7, 91.0, 93.2, 97.5], TE: [59.6, 63.0, 64.9, 67.1, 69.4, 71.6, 74.0, 76.0, 79.3, 82.7, 87.8, 90.1, 92.7, 95.4], OT: [63.5, 68.8, 70.7, 72.7, 74.7, 76.5, 78.3, 80.6, 82.8, 85.8, 88.2, 90.9, 92.9, 96.3], OG: [64.6, 68.7, 70.6, 72.8, 74.6, 76.4, 78.4, 80.3, 82.6, 85.7, 88.4, 91.0, 92.7, 96.4], C: [65.3, 68.8, 70.3, 73.0, 75.1, 76.7, 78.8, 80.7, 82.7, 84.8, 88.7, 90.9, 92.9, 95.4], DE: [64.7, 68.7, 70.5, 72.7, 74.8, 76.8, 78.7, 80.5, 82.8, 85.5, 88.2, 90.6, 93.2, 97.0], DT: [64.8, 69.2, 70.6, 72.5, 74.8, 76.5, 78.7, 80.4, 82.8, 85.3, 88.7, 91.6, 93.4, 96.8], LB: [63.4, 68.8, 70.3, 72.8, 74.7, 76.4, 78.4, 80.6, 83.1, 85.7, 88.8, 90.7, 92.8, 96.9], CB: [57.2, 63.0, 64.8, 67.5, 69.8, 71.7, 73.9, 76.3, 79.3, 83.0, 87.5, 90.2, 92.7, 96.9], S: [65.0, 68.5, 70.6, 72.8, 74.3, 76.2, 78.3, 80.3, 82.8, 85.8, 88.3, 90.5, 92.1, 95.5], K: [70.5, 75.8, 76.8, 78.8, 80.8, 82.6, 84.3, 85.5, 87.2, 89.1, 91.2, 92.7, 94.5, 96.2], P: [72.4, 75.5, 76.5, 79.3, 80.8, 82.3, 84.5, 85.8, 86.8, 88.8, 90.3, 91.4, 92.9, 95.8]};
+function rerateProLeague(G){
+  if (G.proFix) return; G.proFix = 1;
+  const f = (xs, ys, x) => { const n = xs.length; if (x <= xs[0]) return ys[0] + (x - xs[0]); if (x >= xs[n - 1]) return ys[n - 1] + (x - xs[n - 1]);
+    for (let i = 1; i < n; i++) if (x <= xs[i]) { const t = xs[i] === xs[i - 1] ? 1 : (x - xs[i - 1]) / (xs[i] - xs[i - 1]); return ys[i - 1] + t * (ys[i] - ys[i - 1]); } return x; };
+  const fas = freeAgents(G);
+  POS.forEach(pos => {
+    const ros = proPlayers(G).filter(p => p.pos === pos); if (ros.length < 32) return;
+    const v = ros.map(p => p.ovr).sort((a, b) => a - b), xs = PRO_REF_Q.map(q => v[Math.min(v.length - 1, Math.round(q / 100 * (v.length - 1)))]);
+    ros.concat(fas.filter(p => p.pos === pos)).forEach(p => {
+      const d = Math.min(0, round(f(xs, PRO_REF[pos], p.ovr) - p.ovr));
+      if (d) { p.r = p.r.map(x => clamp(x + d, 25, 99)); p.ovr = calcOvr(p); p.pot = clamp(p.pot + d, p.ovr, 99); p.ovh = (p.ovh || []).map(([y, o]) => [y, clamp(o + d, 25, 99)]); }
+      // Draft picks from the old conversion kept a 91 ceiling almost to a man; cap what is left to grow by age.
+      if (p.colPeak != null && p.age <= 27) p.pot = clamp(Math.min(p.pot, p.ovr + 3 + Math.max(0, 26 - p.age) * 2.5), p.ovr, 99);
+    });
+  });
+  G._ovr = null; G._ros = null;
 }
 function draftAssign(G, p){
   const d = G.draft, pk = d.pick + 1, t = T(G, d.order[d.pick]), ct = T(G, p.col);
   p.draft = { y: G.year + 1, rd: Math.ceil(pk / 32), pk, t: t.abbr }; p.c = { amt: +Math.max(.9, 9.5 * Math.pow(.982, pk)).toFixed(2), yrs: 4 }; p.exp = 0; delete p.cls; delete p.dcl; delete p.recruit; toProScale(p);
   moveP(G, p, t.id); p.tx.push([G.year + 1, `Drafted by the ${t.city} ${t.nick} — round ${p.draft.rd}, pick ${pk}`]);
-  if (ct) ct.picks++; d.pool.splice(d.pool.indexOf(p.id), 1); d.log.push([pk, t.id, p.id, pname(p), p.pos, ct ? ct.id : null, d.rank ? d.rank[p.id] || 0 : 0]); d.pick++;
+  if (ct) ct.picks++; d.pool.splice(d.pool.indexOf(p.id), 1); d.log.push([pk, t.id, p.id, pname(p), p.pos, ct ? ct.id : null, d.rank ? d.rank[p.id] || 0 : 0, p.ovr, p.stars || 0]); d.pick++;
   if (pk === 1) news(G, `With the first pick, the ${t.nick} select ${ct ? ct.name : ""} ${p.pos} ${pname(p)}.`, "draft", t.id);
   if (ct && isUser(G, ct.id)) { news(G, `Your ${p.pos} ${pname(p)} goes in round ${p.draft.rd} (No. ${pk}) to the ${t.nick}.`, "draft", ct.id); gainLP(G, p.draft.rd === 1 ? 3 : 1, "a player drafted"); }
   if (d.pick >= d.order.length) finishDraft(G);
@@ -153,7 +185,7 @@ function finishDraft(G){
   const sc = Object.keys(by).map(tid => [+tid, by[tid].s / Math.max(1, by[tid].n), by[tid].best]).sort((a, b) => b[1] - a[1]);
   d.grades = sc.map(([tid, s, best], i) => ({ tid, g: ["A+", "A", "A", "A-", "A-", "B+", "B+", "B+", "B", "B", "B", "B", "B-", "B-", "B-", "B-", "C+", "C+", "C+", "C+", "C", "C", "C", "C", "C-", "C-", "C-", "D+", "D+", "D", "D", "F"][Math.min(31, i)], best }));
   delete d.rank;
-  const h = seasonHist(G); h.draft = d.log.slice(0, 32);
+  const h = seasonHist(G); h.draft = d.log.slice(0, 32); h.draftAll = d.log.slice();
 }
 
 /* --- recruiting --- */
@@ -212,7 +244,7 @@ function progression(G){
     const p = G.players[id]; if (p.ret) continue; if (p.tid == null && !p.fa) continue;
     p.age++; let d;
     if (p.tid != null && p.tid >= 100) { const t = T(G, p.tid); d = gauss((p.pot - p.ovr) * .3 + .9 + (t.coach.ovr - 60) * .015 + (isUser(G, t.id) ? (G.perks.dev || 0) * .3 + ((G.fac || {}).train || 0) * .22 : 0), 2); d = clamp(d, -1, 9); if (p.rs === G.year) p.rsd = 1; p.cls = Math.min(3, (p.cls || 0) + (p.enr === G.year + 1 || p.rs === G.year ? 0 : 1)); }
-    else { p.exp = (p.exp || 0) + 1; d = p.age <= 25 ? gauss((p.pot - p.ovr) * .3 + .4 + (isUser(G, p.tid) ? ((G.fac || {}).train || 0) * .18 : 0), 1.8) : p.age <= 29 ? gauss(0, 1.2) : p.age <= 32 ? gauss(-1.2, 1.5) : gauss(-2.6, 1.6); }
+    else { p.exp = (p.exp || 0) + 1; d = p.age <= 25 ? gauss((p.pot - p.ovr) * .3 + .4 + (isUser(G, p.tid) ? ((G.fac || {}).train || 0) * .18 : 0), 1.8) : p.age <= 27 ? gauss((p.pot - p.ovr) * .3, 1.2) : p.age <= 29 ? gauss(0, 1.2) : p.age <= 32 ? gauss(-1.2, 1.5) : gauss(-2.6, 1.6); }
     tweakRatings(p, round(d + (p.age <= 26 ? (trait(p, "we") - 3) * .3 : 0))); p.ovh.push([G.year + 1, p.ovr]); if (p.ovh.length > 22) p.ovh.shift();
   }
 }
