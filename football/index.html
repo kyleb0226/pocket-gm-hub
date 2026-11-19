@@ -1201,6 +1201,7 @@ function genRecruits(G){
   } });
   G.rec.sort((a, b) => draftValue(G.players[b]) + G.players[b].stars * 3 - draftValue(G.players[a]) - G.players[a].stars * 3);
   G.rec.forEach((id, i) => (G.players[id].rk = i + 1));
+  G.rec.forEach(id => hsProfile(G, G.players[id], true)); hsHonors(G, G.rec);
 }
 const homeBonus = (p, t) => { const st = p.home.slice(-2); return st === t.state ? 9 : REGION[st] && REGION[st] === REGION[t.state] ? 4 : 0; };
 function schoolPull(G, p, t, noise){ return t.prestige + homeBonus(p, t) + (noise ? gauss(0, 6) : 0) + (isUser(G, t.id) ? (G.pitches[p.id] || 0) * (G.scouted[p.id] ? 13 : 10) + (G.perks.rec || 0) * 2 + nilPull(p, G.nil && G.nil.deals[p.id]) + ((G.fac || {}).recruit || 0) + (p.promise && p.promiseBy === t.id ? 8 : 0) - (G.brokenWord === G.year + 1 ? 3 : 0) : 0) + prioBonus(p, t) + (t.coach.ovr - 60) * .08; }
@@ -2006,6 +2007,46 @@ function teamNeeds(G, tid){
   return POS.filter(p => p !== "K" && p !== "P").map(pos => { const st = d[pos].slice(0, STARTERS[pos]), v = avgOf(st, p => p.ovr); return { pos, v: round(v), lg: round(lg[pos]), gap: round(v - lg[pos]), age: round(avgOf(st, p => p.age)), n: d[pos].length }; }).sort((a, b) => a.gap - b.gap);
 }
 
+/* ===== 06c-highschool.js ===== */
+/* ----------------------------- high school: stat lines, records, honours ----------------------------- */
+// High school football is lopsided: a few kids dominate small-school opponents and put up absurd numbers,
+// most are just fine, and a few care more about their history homework. Profiles are built from a
+// per-player seed (never the game RNG), so looking at a page can't change a sim.
+const HS_KEY = { QB: ["py", "passing yards", 4300], RB: ["ry", "rushing yards", 3300], WR: ["rcy", "receiving yards", 1900], TE: ["rcy", "receiving yards", 1900], DE: ["sck", "sacks", 28], DT: ["sck", "sacks", 28], LB: ["tk", "tackles", 240], CB: ["int", "interceptions", 12], S: ["int", "interceptions", 12], OT: ["pk", "pancakes", 150], OG: ["pk", "pancakes", 150], C: ["pk", "pancakes", 150], K: ["fgm", "field goals", 34], P: ["puy", "punting yards", 3700] };
+const HS_USE = { QB: 1.15, RB: 2.1, WR: 2.0, TE: 1.9, DL: 2.6, LB: 1.5, DB: 1.6, OL: 1.7, K: 1, P: 1 };
+const HS_CLASS = { "6A": .9, "5A": 1, "4A": 1.1, "3A": 1.2, "2A": 1.35, "1A": 1.5 };
+const HS_NOSCALE = { g: 1, gs: 1, fgl: 1 };
+const hsStateF = st => .86 + ((st.charCodeAt(0) * 7 + st.charCodeAt(1) * 3) % 29) / 100;
+function hsProfile(G, p, claim){
+  if (p.hsl) return p.hsl;
+  const keep = _rng; _rng = mulberry32(((p.id * 2654435761) ^ (G.seed || 7)) >>> 0);
+  try {
+    const stars = p.stars || clamp(round((p.pot - 52) / 9.5), 1, 5), cls = pick(["6A", "5A", "5A", "4A", "4A", "3A", "3A", "2A", "1A"]), cm = HS_CLASS[cls];
+    let D = [0, .42, .5, .62, .8, 1.02][stars] * Math.exp(gauss(0, .22)) * cm; if (p.pos === "K" || p.pos === "P") D = Math.min(D, .95);
+    const g = rint(11, 15), base = fakeLine(p.pos, Math.max(45, p.ovr) + 6, g, true), M = HS_USE[GROUP(p.pos)] || 1.5;
+    const sr = {}, tot = {}, yrs = D > 1.1 ? 3.1 : 2.4; for (const k in base) { sr[k] = HS_NOSCALE[k] ? base[k] : round(base[k] * M * D * gauss(1, .06)); tot[k] = HS_NOSCALE[k] ? (k === "fgl" ? base[k] : round(base[k] * yrs * 1.15)) : round(sr[k] * (1 + .78 + .55 + (D > 1.1 ? .3 : 0)) * gauss(1, .05)); }
+    [sr, tot].forEach(o => { if (o.pa != null) o.pc = Math.min(o.pc, o.pa); if (o.fga != null) o.fgm = Math.min(o.fgm, o.fga); });
+    const h = { cls, st: (p.home || "TX, TX").slice(-2), sr, tot, D: +D.toFixed(2), aw: [], rec: [], note: [] };
+    if (cm >= 1.35 && D > 1.1) h.note.push("Eye-popping numbers, but against " + cls + " competition");
+    if (p.gpa >= 3.6 && stars <= 2) h.note.push("More worried about his AP US History grade than his stat line");
+    else if (p.gpa >= 3.85) h.note.push("Straight-A student");
+    else if (p.gpa < 2.3) h.note.push("Academic eligibility questions");
+    if (stars <= 2 && D < .8 && !h.note.length) h.note.push("Two-way starter on a run-heavy team; limited film");
+    if (D >= 2.4) h.note.push("Stat sheet looks like a video game");
+    p.hsl = h;
+    const kk = HS_KEY[p.pos]; if (claim && kk) { G.hsRec = G.hsRec || {};
+      [[h.st, hsStateF(h.st), "ST"], ["US", 1.3, "US"]].forEach(([key, f, sc]) => [["S", sr[kk[0]], kk[2] * f], ["C", tot[kk[0]], kk[2] * f * 2.5]].forEach(([per, v, b]) => { const id = key + "|" + kk[0] + "|" + per, r = G.hsRec[id]; if (v > (r ? r.v : round(b))) { G.hsRec[id] = { v, pid: p.id, n: pname(p), y: G.year + 1, st: h.st, lbl: kk[1], per, key, prev: r ? [r.n, r.v] : null }; h.rec.push({ sc, lbl: (per === "S" ? "Single-season " : "Career ") + kk[1], v, st: h.st }); } })); }
+    return h;
+  } finally { _rng = keep; }
+}
+// Mr. Football per state and national player of the year, from a recruiting class.
+function hsHonors(G, ids){
+  const ps = ids.map(id => G.players[id]).filter(p => p && p.hsl), sc = new Map(); ps.forEach(p => sc.set(p.id, (p.ovr + p.pot) / 2 + p.hsl.D * 4 + ((p.id * 7919) % 100) / 25));
+  const by = {}; ps.forEach(p => (by[p.hsl.st] || (by[p.hsl.st] = [])).push(p));
+  for (const st in by) { const top = by[st].sort((a, b) => sc.get(b.id) - sc.get(a.id)); if (top[0] && (top[0].stars || 3) >= 3) top[0].hsl.aw.push("Mr. Football · " + st); top.filter(p => (p.stars || 0) >= 4).slice(0, 3).forEach(p => p.hsl.aw.indexOf("All-State · " + st) < 0 && p.hsl.aw.push("All-State · " + st)); }
+  const nat = ps.slice().sort((a, b) => sc.get(b.id) - sc.get(a.id)); nat.slice(0, 1).forEach(p => p.hsl.aw.unshift("National Player of the Year")); nat.slice(0, 40).forEach(p => p.hsl.aw.indexOf("National Player of the Year") < 0 && p.hsl.aw.push("High School All-American"));
+}
+
 /* ===== 07-save.js ===== */
 
 /* ----------------------------- saves ----------------------------- */
@@ -2373,6 +2414,13 @@ function PlayerPage({ pid, onClose }){
             <div className="grid grid-cols-2 gap-2 mt-2 text-xs"><div className="bg-white/5 rounded-lg p-2"><div className="text-slate-400 text-[10px]">Character</div><div className="font-bold">{p.chr >= 80 ? "Leader" : p.chr >= 60 ? "Solid" : p.chr >= 40 ? "Average" : "Question marks"}</div></div><div className="bg-white/5 rounded-lg p-2"><div className="text-slate-400 text-[10px]">{pro ? "Experience" : "Enrolled"}</div><div className="font-bold">{pro ? (isRookie(G, p) ? "Rookie" : (p.exp || 1) + " yr") : p.enr || "—"}</div></div></div>
           </Card>
         </div>
+
+        {/* high school */}
+        {(() => { const h = hsProfile(G, p, false), kk = HS_KEY[p.pos]; return <Card title={`High school · ${p.hs}`} right={`${p.home} · Class ${h.cls}`}>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">{[["Senior season", h.sr], ["Prep career", h.tot]].map(([l, o]) => <div key={l} className="bg-white/5 rounded-xl p-3"><div className="text-[10px] tracking-widest uppercase mb-2 text-slate-400">{l} · {o.g || 0} games</div>
+            <div className="flex gap-5">{headline(o).map(([k, v]) => <div key={k}><div className="disp text-2xl tnum">{(v || 0).toLocaleString()}</div><div className="text-[10px] text-slate-400">{k}</div></div>)}</div></div>)}</div>
+          {(h.rec.length > 0 || h.aw.length > 0) && <div className="flex flex-wrap gap-1.5 mt-3">{h.rec.map((r, i) => <span key={"r" + i} className="px-2 py-1 rounded-md text-[11px] font-bold bg-amber-300/15 text-amber-300">{r.sc === "US" ? "NATIONAL RECORD" : r.st + " STATE RECORD"} · {r.lbl} ({r.v.toLocaleString()})</span>)}{h.aw.map((a, i) => <span key={"a" + i} className="px-2 py-1 rounded-md text-[11px] font-semibold bg-sky-400/10 text-sky-300">{a}</span>)}</div>}
+          {h.note.length > 0 && <div className="text-xs text-slate-400 italic mt-2">{h.note.join(" · ")}</div>}</Card>; })()}
 
         {/* stat tables */}
         <div>
@@ -3157,7 +3205,7 @@ function RecruitPanel({ portal }){
     <div className="flex items-center justify-between mb-1"><span className="link text-[11px] text-slate-400" onClick={() => setMap(!map)}>{map ? "▾ Hide" : "▸ Show"} the map</span>{st && <span className="text-[11px]">Showing <b className="text-amber-300">{st}</b> only · <span className="link text-slate-400" onClick={() => setSt(null)}>clear</span></span>}</div>
     {map && <div className="mb-3"><RecruitMap recs={all.filter(p => f === "All" || p.pos === f)} sel={st} onSel={setSt} /></div>}
     <div className="flex items-center gap-3"><div className="flex-1 min-w-0"><PosFilter value={f} onChange={setF} /></div><label className="text-[11px] text-slate-400 whitespace-nowrap mb-2"><input type="checkbox" checked={mineOnly} onChange={e => setMine(e.target.checked)} /> pitched</label></div>
-    <PTable rows={rows} empty="Nobody matches." cols={[portal ? ["From", p => <TeamLink t={T(G, p.tid)} />, 1] : ["Rk", p => "#" + p.rk], ["Home", p => p.home, 1],
+    <PTable rows={rows} empty="Nobody matches." cols={[portal ? ["From", p => <TeamLink t={T(G, p.tid)} />, 1] : ["Rk", p => "#" + p.rk], ["Home", p => p.home, 1], ["High school", p => { const h = hsProfile(G, p, false); return <span className="text-xs text-slate-300">{dcHead({ pos: p.pos, pro: h.sr })}{h.rec.length > 0 && <span className="ml-1 text-amber-300 font-bold" title={h.rec.map(r => r.lbl).join(", ")}>RECORD</span>}</span>; }, 1],
       ["Interest", p => <InterestBar v={recruitInterest(G, p)} />], ["Wants", p => G.scouted[p.id] ? ({ home: "Home", prestige: "Prestige", win: "Winning", coach: "Coach" })[prioOf(p)] : <span className="text-slate-600">?</span>, 1],
       ["Leaders", p => <span className="inline-flex gap-1">{recruitLeaders(G, p).map(([t], i) => <span key={t.id} className={t.id === ut.id ? "ring-2 ring-amber-300 rounded-md" : i ? "opacity-60" : ""}><Badge t={t} size={13} /></span>)}</span>, 1],
       ["", p => { const n = G.pitches[p.id] || 0; if (p.commit === ut.id) return <span className="inline-flex items-center gap-1.5"><span className="px-2 py-1 rounded-md bg-emerald-400/15 text-emerald-300 text-[11px] font-bold">✓ Committed</span><Btn small onClick={() => ui.openInterview(p.id)}>Notes</Btn></span>; return <span className="inline-flex items-center gap-1.5"><span className="text-amber-300 tracking-tighter">{"●".repeat(n)}<span className="text-slate-700">{"●".repeat(3 - n)}</span></span><Btn small onClick={() => ui.openInterview(p.id)}>{G.scouted[p.id] ? "Notes" : "Visit"}</Btn>{p.tid !== ut.id && <NilBtn p={p} />}<Btn small kind="pri" disabled={G.pitchLeft <= 0 || n >= 3 || p.tid === ut.id} onClick={() => ui.act(G => pitch(G, p))}>Pitch</Btn></span>; }]]} /></Card></div>;
@@ -3181,7 +3229,7 @@ function SeasonReview(){
 }
 function OfficeTab(){
   const ui = useUI(), G = ui.G, pro = G.mode === "pro", off = G.phase === "off", s = G.offStep;
-  const tabs = pro ? (off ? ["Re-sign", "Free agents", "Trades", "Draft", "Cap"] : ["Draft", "Trades", "Free agents", "Cap"]) : ["Recruiting", "Portal", "Draft", "Schedule", "Class ranks"];
+  const tabs = pro ? (off ? ["Re-sign", "Free agents", "Trades", "Draft", "Cap"] : ["Draft", "Trades", "Free agents", "Cap"]) : ["Recruiting", "Portal", "Draft", "Schedule", "Class ranks", "HS records"];
   const start = pro ? (off ? ["Re-sign", "Re-sign", "Free agents", "Draft", "Free agents", "Cap"][s] : "Draft") : (off ? ["Recruiting", "Recruiting", "Recruiting", "Draft", "Recruiting", "Class ranks"][s] : "Draft");
   const [tab, setTab] = useState(start);
   const tips = pro ? ["Look back on the year, then advance to open contract talks.", "Re-sign the players you want to keep. Everyone else hits the market when you advance.", "Shop the free-agent market. The draft begins when you advance.", "The draft is live. Make your picks; advancing lets your scouts finish it for you.", "College Signing Day happens around the league. Free agents are still available.", "Camp opens. Advancing develops every player and starts the new season."]
@@ -3199,6 +3247,7 @@ function OfficeTab(){
     {tab === "Recruiting" && <RecruitPanel />}
     {tab === "Portal" && <RecruitPanel portal />}
     {tab === "Class ranks" && <ClassRanks />}
+    {tab === "HS records" && <HsRecords />}
     {tab === "Schedule" && <SchedulePicker />}
   </div>);
 }
@@ -3550,6 +3599,15 @@ function DraftClasses(){
           <td className="l text-xs">{r.gone ? <span className="text-slate-600">out of the league</span> : r.ret ? <span className="text-slate-500">Retired {r.ret}</span> : cur ? <span>{cur.abbr}{cur.id !== r.tid && <span className="text-slate-500"> (moved)</span>}</span> : <span className="text-slate-400">Free agent</span>}</td></tr>; })}</tbody></table></div>
       <div className="px-4 py-2 text-[11px] text-slate-500">Board = consensus rank before the draft. Class rank = where he sits among this class by current rating; a steal outplays his slot, a bust doesn't.{!dc.full && " This draft was saved before full classes were tracked, so only round 1 is on file."} Click any player for the full page.</div></Card>
   </div>);
+}
+
+/* ----------------------------- high school records ----------------------------- */
+function HsRecords(){
+  const ui = useUI(), G = ui.G, [scope, setScope] = useState("US"), recs = Object.values(G.hsRec || {}).filter(r => scope === "US" ? r.key === "US" : r.key !== "US").sort((a, b) => scope === "US" ? 0 : b.y - a.y || a.key.localeCompare(b.key));
+  const chip = (k, l) => <button key={k} onClick={() => setScope(k)} className={cx("px-2 py-0.5 rounded text-[11px] font-semibold", scope === k ? "bg-acc text-slate-950" : "text-slate-400")}>{l}</button>;
+  return <Card title="High school record book" right={<span className="inline-flex gap-1">{chip("US", "National")}{chip("ST", "State")}</span>} pad={false}>
+    {recs.length ? <table className="st tnum"><thead><tr><th className="l">Record</th>{scope === "ST" && <th className="l">State</th>}<th>Mark</th><th className="l">Holder</th><th>Set</th><th className="l">Broke</th></tr></thead><tbody>{recs.map(r => <tr key={r.key + r.lbl + r.per}><td className="l">{r.per === "S" ? "Season" : "Career"} {r.lbl}</td>{scope === "ST" && <td className="l">{r.key}</td>}<td className="font-bold text-amber-300">{r.v.toLocaleString()}</td><td className="l"><PLink pid={r.pid} name={r.n} /> <span className="text-slate-500 text-xs">{r.st}</span></td><td>{r.y}</td><td className="l text-xs text-slate-500">{r.prev ? r.prev[0] + " (" + r.prev[1].toLocaleString() + ")" : "the old standard"}</td></tr>)}</tbody></table> : <Empty>No record has fallen yet. They go down when a recruiting class has a monster.</Empty>}
+    <div className="px-4 py-2 text-[11px] text-slate-500">Set by recruits as they come through. Open any recruit to see his high school line, records and honours.</div></Card>;
 }
 
 /* ----------------------------- program legends ----------------------------- */

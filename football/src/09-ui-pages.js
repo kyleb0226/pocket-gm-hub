@@ -95,6 +95,13 @@ function PlayerPage({ pid, onClose }){
           </Card>
         </div>
 
+        {/* high school */}
+        {(() => { const h = hsProfile(G, p, false), kk = HS_KEY[p.pos]; return <Card title={`High school · ${p.hs}`} right={`${p.home} · Class ${h.cls}`}>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">{[["Senior season", h.sr], ["Prep career", h.tot]].map(([l, o]) => <div key={l} className="bg-white/5 rounded-xl p-3"><div className="text-[10px] tracking-widest uppercase mb-2 text-slate-400">{l} · {o.g || 0} games</div>
+            <div className="flex gap-5">{headline(o).map(([k, v]) => <div key={k}><div className="disp text-2xl tnum">{(v || 0).toLocaleString()}</div><div className="text-[10px] text-slate-400">{k}</div></div>)}</div></div>)}</div>
+          {(h.rec.length > 0 || h.aw.length > 0) && <div className="flex flex-wrap gap-1.5 mt-3">{h.rec.map((r, i) => <span key={"r" + i} className="px-2 py-1 rounded-md text-[11px] font-bold bg-amber-300/15 text-amber-300">{r.sc === "US" ? "NATIONAL RECORD" : r.st + " STATE RECORD"} · {r.lbl} ({r.v.toLocaleString()})</span>)}{h.aw.map((a, i) => <span key={"a" + i} className="px-2 py-1 rounded-md text-[11px] font-semibold bg-sky-400/10 text-sky-300">{a}</span>)}</div>}
+          {h.note.length > 0 && <div className="text-xs text-slate-400 italic mt-2">{h.note.join(" · ")}</div>}</Card>; })()}
+
         {/* stat tables */}
         <div>
           {STAT_TABLES.map(d => <StatTable key={d.name + "C"} p={p} lvl="C" def={d} live={liveLvl === "C" && p.st.g > 0} />)}

@@ -92,7 +92,7 @@ function RecruitPanel({ portal }){
     <div className="flex items-center justify-between mb-1"><span className="link text-[11px] text-slate-400" onClick={() => setMap(!map)}>{map ? "▾ Hide" : "▸ Show"} the map</span>{st && <span className="text-[11px]">Showing <b className="text-amber-300">{st}</b> only · <span className="link text-slate-400" onClick={() => setSt(null)}>clear</span></span>}</div>
     {map && <div className="mb-3"><RecruitMap recs={all.filter(p => f === "All" || p.pos === f)} sel={st} onSel={setSt} /></div>}
     <div className="flex items-center gap-3"><div className="flex-1 min-w-0"><PosFilter value={f} onChange={setF} /></div><label className="text-[11px] text-slate-400 whitespace-nowrap mb-2"><input type="checkbox" checked={mineOnly} onChange={e => setMine(e.target.checked)} /> pitched</label></div>
-    <PTable rows={rows} empty="Nobody matches." cols={[portal ? ["From", p => <TeamLink t={T(G, p.tid)} />, 1] : ["Rk", p => "#" + p.rk], ["Home", p => p.home, 1],
+    <PTable rows={rows} empty="Nobody matches." cols={[portal ? ["From", p => <TeamLink t={T(G, p.tid)} />, 1] : ["Rk", p => "#" + p.rk], ["Home", p => p.home, 1], ["High school", p => { const h = hsProfile(G, p, false); return <span className="text-xs text-slate-300">{dcHead({ pos: p.pos, pro: h.sr })}{h.rec.length > 0 && <span className="ml-1 text-amber-300 font-bold" title={h.rec.map(r => r.lbl).join(", ")}>RECORD</span>}</span>; }, 1],
       ["Interest", p => <InterestBar v={recruitInterest(G, p)} />], ["Wants", p => G.scouted[p.id] ? ({ home: "Home", prestige: "Prestige", win: "Winning", coach: "Coach" })[prioOf(p)] : <span className="text-slate-600">?</span>, 1],
       ["Leaders", p => <span className="inline-flex gap-1">{recruitLeaders(G, p).map(([t], i) => <span key={t.id} className={t.id === ut.id ? "ring-2 ring-amber-300 rounded-md" : i ? "opacity-60" : ""}><Badge t={t} size={13} /></span>)}</span>, 1],
       ["", p => { const n = G.pitches[p.id] || 0; if (p.commit === ut.id) return <span className="inline-flex items-center gap-1.5"><span className="px-2 py-1 rounded-md bg-emerald-400/15 text-emerald-300 text-[11px] font-bold">✓ Committed</span><Btn small onClick={() => ui.openInterview(p.id)}>Notes</Btn></span>; return <span className="inline-flex items-center gap-1.5"><span className="text-amber-300 tracking-tighter">{"●".repeat(n)}<span className="text-slate-700">{"●".repeat(3 - n)}</span></span><Btn small onClick={() => ui.openInterview(p.id)}>{G.scouted[p.id] ? "Notes" : "Visit"}</Btn>{p.tid !== ut.id && <NilBtn p={p} />}<Btn small kind="pri" disabled={G.pitchLeft <= 0 || n >= 3 || p.tid === ut.id} onClick={() => ui.act(G => pitch(G, p))}>Pitch</Btn></span>; }]]} /></Card></div>;
@@ -116,7 +116,7 @@ function SeasonReview(){
 }
 function OfficeTab(){
   const ui = useUI(), G = ui.G, pro = G.mode === "pro", off = G.phase === "off", s = G.offStep;
-  const tabs = pro ? (off ? ["Re-sign", "Free agents", "Trades", "Draft", "Cap"] : ["Draft", "Trades", "Free agents", "Cap"]) : ["Recruiting", "Portal", "Draft", "Schedule", "Class ranks"];
+  const tabs = pro ? (off ? ["Re-sign", "Free agents", "Trades", "Draft", "Cap"] : ["Draft", "Trades", "Free agents", "Cap"]) : ["Recruiting", "Portal", "Draft", "Schedule", "Class ranks", "HS records"];
   const start = pro ? (off ? ["Re-sign", "Re-sign", "Free agents", "Draft", "Free agents", "Cap"][s] : "Draft") : (off ? ["Recruiting", "Recruiting", "Recruiting", "Draft", "Recruiting", "Class ranks"][s] : "Draft");
   const [tab, setTab] = useState(start);
   const tips = pro ? ["Look back on the year, then advance to open contract talks.", "Re-sign the players you want to keep. Everyone else hits the market when you advance.", "Shop the free-agent market. The draft begins when you advance.", "The draft is live. Make your picks; advancing lets your scouts finish it for you.", "College Signing Day happens around the league. Free agents are still available.", "Camp opens. Advancing develops every player and starts the new season."]
@@ -134,6 +134,7 @@ function OfficeTab(){
     {tab === "Recruiting" && <RecruitPanel />}
     {tab === "Portal" && <RecruitPanel portal />}
     {tab === "Class ranks" && <ClassRanks />}
+    {tab === "HS records" && <HsRecords />}
     {tab === "Schedule" && <SchedulePicker />}
   </div>);
 }

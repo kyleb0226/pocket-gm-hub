@@ -200,6 +200,7 @@ function genRecruits(G){
   } });
   G.rec.sort((a, b) => draftValue(G.players[b]) + G.players[b].stars * 3 - draftValue(G.players[a]) - G.players[a].stars * 3);
   G.rec.forEach((id, i) => (G.players[id].rk = i + 1));
+  G.rec.forEach(id => hsProfile(G, G.players[id], true)); hsHonors(G, G.rec);
 }
 const homeBonus = (p, t) => { const st = p.home.slice(-2); return st === t.state ? 9 : REGION[st] && REGION[st] === REGION[t.state] ? 4 : 0; };
 function schoolPull(G, p, t, noise){ return t.prestige + homeBonus(p, t) + (noise ? gauss(0, 6) : 0) + (isUser(G, t.id) ? (G.pitches[p.id] || 0) * (G.scouted[p.id] ? 13 : 10) + (G.perks.rec || 0) * 2 + nilPull(p, G.nil && G.nil.deals[p.id]) + ((G.fac || {}).recruit || 0) + (p.promise && p.promiseBy === t.id ? 8 : 0) - (G.brokenWord === G.year + 1 ? 3 : 0) : 0) + prioBonus(p, t) + (t.coach.ovr - 60) * .08; }

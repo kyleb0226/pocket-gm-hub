@@ -208,6 +208,15 @@ function DraftClasses(){
   </div>);
 }
 
+/* ----------------------------- high school records ----------------------------- */
+function HsRecords(){
+  const ui = useUI(), G = ui.G, [scope, setScope] = useState("US"), recs = Object.values(G.hsRec || {}).filter(r => scope === "US" ? r.key === "US" : r.key !== "US").sort((a, b) => scope === "US" ? 0 : b.y - a.y || a.key.localeCompare(b.key));
+  const chip = (k, l) => <button key={k} onClick={() => setScope(k)} className={cx("px-2 py-0.5 rounded text-[11px] font-semibold", scope === k ? "bg-acc text-slate-950" : "text-slate-400")}>{l}</button>;
+  return <Card title="High school record book" right={<span className="inline-flex gap-1">{chip("US", "National")}{chip("ST", "State")}</span>} pad={false}>
+    {recs.length ? <table className="st tnum"><thead><tr><th className="l">Record</th>{scope === "ST" && <th className="l">State</th>}<th>Mark</th><th className="l">Holder</th><th>Set</th><th className="l">Broke</th></tr></thead><tbody>{recs.map(r => <tr key={r.key + r.lbl + r.per}><td className="l">{r.per === "S" ? "Season" : "Career"} {r.lbl}</td>{scope === "ST" && <td className="l">{r.key}</td>}<td className="font-bold text-amber-300">{r.v.toLocaleString()}</td><td className="l"><PLink pid={r.pid} name={r.n} /> <span className="text-slate-500 text-xs">{r.st}</span></td><td>{r.y}</td><td className="l text-xs text-slate-500">{r.prev ? r.prev[0] + " (" + r.prev[1].toLocaleString() + ")" : "the old standard"}</td></tr>)}</tbody></table> : <Empty>No record has fallen yet. They go down when a recruiting class has a monster.</Empty>}
+    <div className="px-4 py-2 text-[11px] text-slate-500">Set by recruits as they come through. Open any recruit to see his high school line, records and honours.</div></Card>;
+}
+
 /* ----------------------------- program legends ----------------------------- */
 function ProgramLegends(){
   const ui = useUI(), G = ui.G, t = userTeam(G), tm = useMemo(() => allTimeTeam(G, G.uid), [G.year, G.phase]), eras = useMemo(() => programEras(G, G.uid), [G.year, G.phase]);
