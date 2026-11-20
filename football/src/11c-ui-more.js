@@ -217,6 +217,22 @@ function HsRecords(){
     <div className="px-4 py-2 text-[11px] text-slate-500">Set by recruits as they come through. Open any recruit to see his high school line, records and honours.</div></Card>;
 }
 
+/* ----------------------------- all-star games archive ----------------------------- */
+function AllStarGames(){
+  const ui = useUI(), G = ui.G, [lvl, setLvl] = useState("all"), [open, setOpen] = useState(null), list = (G.asgs || []).filter(g => lvl === "all" || g.lvl === lvl);
+  const chip = (k, l) => <button key={k} onClick={() => setLvl(k)} className={cx("px-2 py-0.5 rounded text-[11px] font-semibold", lvl === k ? "bg-acc text-slate-950" : "text-slate-400")}>{l}</button>;
+  if (!(G.asgs || []).length) return <Card><Empty>The all-star games are played as each offseason opens: the All-American Bowl and Under Armour game for the top recruits, the Senior Bowl and East-West Shrine Bowl for draft prospects, and the Pro Bowl after the pro season.</Empty></Card>;
+  return <Card title="All-star games" right={<span className="inline-flex gap-1">{chip("all", "All")}{chip("hs", "High school")}{chip("col", "College")}{chip("pro", "Pro")}</span>} pad={false}>
+    {list.map((g, i) => { const k = g.key + g.y, o = open === k, w = g.sc[0] > g.sc[1] ? 0 : 1; return <div key={k} className="border-b border-white/5 px-4 py-3">
+      <div className="flex items-center gap-3 cursor-pointer" onClick={() => setOpen(o ? null : k)}>
+        <div className="w-12 disp text-slate-500">{g.y}</div>
+        <div className="flex-1 min-w-0"><div className="text-sm font-semibold truncate">{g.title}</div><div className="text-[10px] text-slate-500">{g.city} · {g.n} players</div></div>
+        <div className="text-sm tnum text-right"><span className={w === 0 ? "text-amber-300 font-bold" : "text-slate-400"}>{g.sides[0]} {g.sc[0]}</span> <span className="text-slate-600">–</span> <span className={w === 1 ? "text-amber-300 font-bold" : "text-slate-400"}>{g.sc[1]} {g.sides[1]}</span></div></div>
+      {g.mvp && <div className="text-xs text-slate-400 mt-1 ml-15">MVP: <PLink pid={g.mvp.pid} name={g.mvp.n} /> <span className="text-slate-500">{g.mvp.pos}{g.mvp.from ? ", " + g.mvp.from : ""} — {g.mvp.line}</span></div>}
+      {o && <div className="grid sm:grid-cols-2 gap-3 mt-2">{g.rosters.map((r, j) => <div key={j}><div className="text-[10px] uppercase tracking-widest text-slate-500 mb-1">{g.sides[j]}</div><div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs">{r.map(x => <span key={x.pid}><span className="text-slate-500">{x.pos}</span> <PLink pid={x.pid} name={x.n} /></span>)}</div></div>)}</div>}</div>; })}
+  </Card>;
+}
+
 /* ----------------------------- program legends ----------------------------- */
 function ProgramLegends(){
   const ui = useUI(), G = ui.G, t = userTeam(G), tm = useMemo(() => allTimeTeam(G, G.uid), [G.year, G.phase]), eras = useMemo(() => programEras(G, G.uid), [G.year, G.phase]);

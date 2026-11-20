@@ -168,6 +168,7 @@ function allStarGame(G){
   const win = s1 > s2 ? c1 : c2, pool = (A.pb[win] || []).map(r => G.players[r.pid]).filter(p => p && ["QB", "RB", "WR", "TE", "DE", "LB", "CB"].includes(p.pos)), mvp = pool.length ? wpick(pool.map(p => [p, Math.pow(p.ovr / 80, 6) * (isOff(p.pos) ? 2 : 1)])) : null;
   const line = !mvp ? "" : mvp.pos === "QB" ? `${rint(11, 19)}/${rint(20, 26)}, ${rint(160, 290)} yds, ${rint(2, 4)} TD` : mvp.pos === "RB" ? `${rint(8, 14)} car, ${rint(70, 140)} yds, ${rint(1, 2)} TD` : isOff(mvp.pos) ? `${rint(5, 9)} rec, ${rint(90, 170)} yds, ${rint(1, 3)} TD` : `${rint(4, 8)} tkl, ${rint(1, 3)} sck, ${rint(0, 1)} INT`;
   A.asg = { sc: [s1, s2], confs: [c1, c2], mvp: mvp ? Object.assign(ref(G, mvp), { line }) : null };
+  (G.asgs = G.asgs || []).unshift({ y: G.year, key: "pro", lvl: "pro", title: "Pro Bowl", city: "Honolulu", sides: [c1, c2], sc: [s1, s2], n: (A.pb[c1] || []).length + (A.pb[c2] || []).length, mvp: mvp ? { pid: mvp.id, n: pname(mvp), pos: mvp.pos, line, from: (T(G, mvp.tid) || {}).name || "", side: win } : null, rosters: [c1, c2].map(c => (A.pb[c] || []).slice(0, 40).map(r => ({ pid: r.pid, n: r.n, pos: r.pos, rk: 0 }))) });
   if (mvp) { mvp.aw.push([G.year, "All-Star Game MVP"]); news(G, `The ${win} wins the all-star game ${Math.max(s1, s2)}–${Math.min(s1, s2)}. ${mvp.pos} ${pname(mvp)} is the MVP.`, "pro", mvp.tid); }
 }
 

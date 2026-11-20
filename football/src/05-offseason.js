@@ -69,7 +69,7 @@ function beginOffseason(G){
     if ((buried && chance(.3)) || (big && chance(.35)) || chance(.012)) { p.portal = 1; G.portal.push(p.id); } }));
   });
   promiseReview(G);
-  genRecruits(G);
+  genRecruits(G); allStarBowls(G);
   G.pitchLeft = 15 + (G.bonusPitch || 0) + staffBonus(G, "rc"); G.bonusPitch = 0; G.pitches = {}; nilReset(G);
   if (G.mode === "pro") G.ivLeft += staffBonus(G, "sc") * 2 + ((G.fac || {}).recruit || 0) * 3;
   news(G, `The ${G.year} season is in the books. ${G.draft.pool.length} prospects are in the draft pool, ${G.portal.length} players have entered the transfer portal, and ${G.rec.length} recruits are waiting on Signing Day.`, "off");

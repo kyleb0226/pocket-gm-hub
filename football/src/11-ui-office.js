@@ -168,10 +168,11 @@ function HistoryTab(){
   const ui = useUI(), G = ui.G, [tab, setTab] = useState("Seasons"), c = G.coach, hofs = ids => ids.map(id => G.players[id]).filter(Boolean);
   const titles = c.hist.filter(r => r.note === "National Champions" || r.note === "Won Pocket Bowl").length;
   return (<div>
-    <SubTabs tabs={["Seasons", "Record book", "Halls of Fame", "Greatest teams", "Draft classes", "Program legends", "What if?", "Your career"]} value={tab} onChange={setTab} />
+    <SubTabs tabs={["Seasons", "Record book", "Halls of Fame", "Greatest teams", "Draft classes", "Program legends", "All-star games", "What if?", "Your career"]} value={tab} onChange={setTab} />
     {tab === "Greatest teams" && <GreatestTeams />}
     {tab === "Draft classes" && <DraftClasses />}
     {tab === "Program legends" && <ProgramLegends />}
+    {tab === "All-star games" && <AllStarGames />}
     {tab === "What if?" && <WhatIf />}
     {tab === "Seasons" && (G.hist.filter(h => h.natChamp != null || h.proChamp != null).length ? <div className="space-y-2">{G.hist.slice().reverse().filter(h => h.natChamp != null || h.proChamp != null).map(h => <SeasonCard key={h.y} h={h} />)}</div> : <Card><Empty>History is written one season at a time. Finish {G.year} and it starts here.</Empty></Card>)}
     {tab === "Record book" && <div className="grid md:grid-cols-2 gap-3"><RecordBook title="College · single season" rec={G.records.col} /><RecordBook title="College · career" rec={G.records.colCareer} /><RecordBook title="Pro · single season" rec={G.records.pro} /><RecordBook title="Pro · career" rec={G.records.proCareer} /></div>}

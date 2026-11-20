@@ -1070,7 +1070,7 @@ function beginOffseason(G){
     if ((buried && chance(.3)) || (big && chance(.35)) || chance(.012)) { p.portal = 1; G.portal.push(p.id); } }));
   });
   promiseReview(G);
-  genRecruits(G);
+  genRecruits(G); allStarBowls(G);
   G.pitchLeft = 15 + (G.bonusPitch || 0) + staffBonus(G, "rc"); G.bonusPitch = 0; G.pitches = {}; nilReset(G);
   if (G.mode === "pro") G.ivLeft += staffBonus(G, "sc") * 2 + ((G.fac || {}).recruit || 0) * 3;
   news(G, `The ${G.year} season is in the books. ${G.draft.pool.length} prospects are in the draft pool, ${G.portal.length} players have entered the transfer portal, and ${G.rec.length} recruits are waiting on Signing Day.`, "off");
@@ -1525,6 +1525,7 @@ function allStarGame(G){
   const win = s1 > s2 ? c1 : c2, pool = (A.pb[win] || []).map(r => G.players[r.pid]).filter(p => p && ["QB", "RB", "WR", "TE", "DE", "LB", "CB"].includes(p.pos)), mvp = pool.length ? wpick(pool.map(p => [p, Math.pow(p.ovr / 80, 6) * (isOff(p.pos) ? 2 : 1)])) : null;
   const line = !mvp ? "" : mvp.pos === "QB" ? `${rint(11, 19)}/${rint(20, 26)}, ${rint(160, 290)} yds, ${rint(2, 4)} TD` : mvp.pos === "RB" ? `${rint(8, 14)} car, ${rint(70, 140)} yds, ${rint(1, 2)} TD` : isOff(mvp.pos) ? `${rint(5, 9)} rec, ${rint(90, 170)} yds, ${rint(1, 3)} TD` : `${rint(4, 8)} tkl, ${rint(1, 3)} sck, ${rint(0, 1)} INT`;
   A.asg = { sc: [s1, s2], confs: [c1, c2], mvp: mvp ? Object.assign(ref(G, mvp), { line }) : null };
+  (G.asgs = G.asgs || []).unshift({ y: G.year, key: "pro", lvl: "pro", title: "Pro Bowl", city: "Honolulu", sides: [c1, c2], sc: [s1, s2], n: (A.pb[c1] || []).length + (A.pb[c2] || []).length, mvp: mvp ? { pid: mvp.id, n: pname(mvp), pos: mvp.pos, line, from: (T(G, mvp.tid) || {}).name || "", side: win } : null, rosters: [c1, c2].map(c => (A.pb[c] || []).slice(0, 40).map(r => ({ pid: r.pid, n: r.n, pos: r.pos, rk: 0 }))) });
   if (mvp) { mvp.aw.push([G.year, "All-Star Game MVP"]); news(G, `The ${win} wins the all-star game ${Math.max(s1, s2)}–${Math.min(s1, s2)}. ${mvp.pos} ${pname(mvp)} is the MVP.`, "pro", mvp.tid); }
 }
 
@@ -1735,6 +1736,43 @@ function eraShift(G){
   const cur = G.era ? G.era.k : 0; if (G.year - (G.era ? G.era.y : G.year - 2) < 4 || !chance(.4)) return;
   const k = pick([-1, 0, 1].filter(x => x !== cur)); G.era = { k, y: G.year + 1 }; (G.eras = G.eras || []).unshift({ y: G.year + 1, k });
   news(G, `RULE CHANGE: ${ERAS[k][0]}. ${ERAS[k][1]}`, "off");
+}
+
+/* ===== 05e-allstar.js ===== */
+/* ----------------------------- all-star bowls: high school, college, pro ----------------------------- */
+// High school: the All-American Bowl (top 100 recruits, East v West) and the Under Armour game (next 100).
+// College: the Senior Bowl (top 100 draft prospects, North v South) and the East-West Shrine Bowl (next 100).
+// Pro: the Pro Bowl (see allStarGame). Every game lands in G.asgs, newest first.
+const ASG_BOWLS = [
+  { key: "aab", lvl: "hs", title: "All-American Bowl", city: "San Antonio", from: 0, to: 100, sides: ["East", "West"], split: "region" },
+  { key: "ua", lvl: "hs", title: "Under Armour All-America Game", city: "Orlando", from: 100, to: 200, sides: ["Team Black", "Team White"], split: "snake" },
+  { key: "sb", lvl: "col", title: "Senior Bowl", city: "Mobile", from: 0, to: 100, sides: ["North", "South"], split: "snake" },
+  { key: "shrine", lvl: "col", title: "East-West Shrine Bowl", city: "Las Vegas", from: 100, to: 200, sides: ["East", "West"], split: "region" },
+];
+const BOWL_WEST = { W: 1, SW: 1, MW: 1 };
+function bowlGame(G, b, ps){
+  if (ps.length < 24) return null;
+  const sides = [[], []];
+  if (b.split === "region") ps.forEach((p, i) => { const st = (p.home || "").slice(-2), w = BOWL_WEST[REGION[st]] ? 1 : 0; sides[sides[w].length > sides[1 - w].length + 6 ? 1 - w : w].push(p); });
+  else ps.forEach((p, i) => sides[[0, 1, 1, 0][i % 4]].push(p));
+  const q = p => (p.hsl ? p.ovr * .7 + p.pot * .3 : p.ovr), str = s => avgOf(s, q, 70), d = (str(sides[0]) - str(sides[1])) * .5;
+  let s1 = Math.max(3, round(gauss(24 + d, 8))), s2 = Math.max(3, round(gauss(24 - d, 8))); if (s1 === s2) s1 += rint(1, 3);
+  const w = s1 > s2 ? 0 : 1, pool = sides[w].filter(p => ["QB", "RB", "WR", "TE", "DE", "LB", "CB", "S"].includes(p.pos)),
+    mvp = pool.length ? wpick(pool.map(p => [p, Math.pow(q(p) / 75, 6) * (isOff(p.pos) ? 2 : 1)])) : null;
+  const line = !mvp ? "" : mvp.pos === "QB" ? `${rint(10, 18)}/${rint(17, 25)}, ${rint(140, 270)} yds, ${rint(2, 4)} TD` : mvp.pos === "RB" ? `${rint(8, 14)} car, ${rint(60, 130)} yds, ${rint(1, 2)} TD` : isOff(mvp.pos) ? `${rint(4, 8)} rec, ${rint(80, 160)} yds, ${rint(1, 2)} TD` : `${rint(3, 7)} tkl, ${rint(1, 3)} sck${chance(.35) ? ", 1 INT" : ""}`;
+  const tag = b.title + " MVP", rec = G.rec ? G.rec.length : 0;
+  ps.forEach(p => { const lbl = b.title; if (p.hsl) { p.hsl.aw.indexOf(lbl) < 0 && p.hsl.aw.push(lbl); } else p.aw.push([G.year, lbl]); });
+  if (mvp) { if (mvp.hsl) mvp.hsl.aw.push(tag); else mvp.aw.push([G.year, tag]); }
+  const g = { y: G.year + 1, key: b.key, lvl: b.lvl, title: b.title, city: b.city, sides: b.sides, sc: [s1, s2], n: ps.length, mvp: mvp ? { pid: mvp.id, n: pname(mvp), pos: mvp.pos, line, from: b.lvl === "hs" ? mvp.home : (T(G, mvp.col) || {}).name || "", side: b.sides[w] } : null,
+    rosters: sides.map(s => s.slice(0, 40).map(p => ({ pid: p.id, n: pname(p), pos: p.pos, rk: p.rk || (G.draft && G.draft.rank ? G.draft.rank[p.id] : 0) }))) };
+  (G.asgs = G.asgs || []).unshift(g);
+  const mine = ps.some(p => (p.col === G.uid) || (p.commit === G.uid));
+  news(G, `${b.title}: ${b.sides[w]} wins ${Math.max(s1, s2)}–${Math.min(s1, s2)}. ${mvp ? mvp.pos + " " + pname(mvp) + " is the MVP" : ""}${mine ? " — and your name was on the roster." : "."}`, "off");
+  return g;
+}
+function allStarBowls(G){
+  const rec = (G.rec || []).map(id => G.players[id]).filter(Boolean).sort((a, b) => (a.rk || 999) - (b.rk || 999)), pros = ((G.draft && G.draft.pool) || []).map(id => G.players[id]).filter(Boolean);
+  ASG_BOWLS.forEach(b => { const src = b.lvl === "hs" ? rec : pros; bowlGame(G, b, src.slice(b.from, b.to)); });
 }
 
 /* ===== 06-events.js ===== */
@@ -3281,10 +3319,11 @@ function HistoryTab(){
   const ui = useUI(), G = ui.G, [tab, setTab] = useState("Seasons"), c = G.coach, hofs = ids => ids.map(id => G.players[id]).filter(Boolean);
   const titles = c.hist.filter(r => r.note === "National Champions" || r.note === "Won Pocket Bowl").length;
   return (<div>
-    <SubTabs tabs={["Seasons", "Record book", "Halls of Fame", "Greatest teams", "Draft classes", "Program legends", "What if?", "Your career"]} value={tab} onChange={setTab} />
+    <SubTabs tabs={["Seasons", "Record book", "Halls of Fame", "Greatest teams", "Draft classes", "Program legends", "All-star games", "What if?", "Your career"]} value={tab} onChange={setTab} />
     {tab === "Greatest teams" && <GreatestTeams />}
     {tab === "Draft classes" && <DraftClasses />}
     {tab === "Program legends" && <ProgramLegends />}
+    {tab === "All-star games" && <AllStarGames />}
     {tab === "What if?" && <WhatIf />}
     {tab === "Seasons" && (G.hist.filter(h => h.natChamp != null || h.proChamp != null).length ? <div className="space-y-2">{G.hist.slice().reverse().filter(h => h.natChamp != null || h.proChamp != null).map(h => <SeasonCard key={h.y} h={h} />)}</div> : <Card><Empty>History is written one season at a time. Finish {G.year} and it starts here.</Empty></Card>)}
     {tab === "Record book" && <div className="grid md:grid-cols-2 gap-3"><RecordBook title="College · single season" rec={G.records.col} /><RecordBook title="College · career" rec={G.records.colCareer} /><RecordBook title="Pro · single season" rec={G.records.pro} /><RecordBook title="Pro · career" rec={G.records.proCareer} /></div>}
@@ -3608,6 +3647,22 @@ function HsRecords(){
   return <Card title="High school record book" right={<span className="inline-flex gap-1">{chip("US", "National")}{chip("ST", "State")}</span>} pad={false}>
     {recs.length ? <table className="st tnum"><thead><tr><th className="l">Record</th>{scope === "ST" && <th className="l">State</th>}<th>Mark</th><th className="l">Holder</th><th>Set</th><th className="l">Broke</th></tr></thead><tbody>{recs.map(r => <tr key={r.key + r.lbl + r.per}><td className="l">{r.per === "S" ? "Season" : "Career"} {r.lbl}</td>{scope === "ST" && <td className="l">{r.key}</td>}<td className="font-bold text-amber-300">{r.v.toLocaleString()}</td><td className="l"><PLink pid={r.pid} name={r.n} /> <span className="text-slate-500 text-xs">{r.st}</span></td><td>{r.y}</td><td className="l text-xs text-slate-500">{r.prev ? r.prev[0] + " (" + r.prev[1].toLocaleString() + ")" : "the old standard"}</td></tr>)}</tbody></table> : <Empty>No record has fallen yet. They go down when a recruiting class has a monster.</Empty>}
     <div className="px-4 py-2 text-[11px] text-slate-500">Set by recruits as they come through. Open any recruit to see his high school line, records and honours.</div></Card>;
+}
+
+/* ----------------------------- all-star games archive ----------------------------- */
+function AllStarGames(){
+  const ui = useUI(), G = ui.G, [lvl, setLvl] = useState("all"), [open, setOpen] = useState(null), list = (G.asgs || []).filter(g => lvl === "all" || g.lvl === lvl);
+  const chip = (k, l) => <button key={k} onClick={() => setLvl(k)} className={cx("px-2 py-0.5 rounded text-[11px] font-semibold", lvl === k ? "bg-acc text-slate-950" : "text-slate-400")}>{l}</button>;
+  if (!(G.asgs || []).length) return <Card><Empty>The all-star games are played as each offseason opens: the All-American Bowl and Under Armour game for the top recruits, the Senior Bowl and East-West Shrine Bowl for draft prospects, and the Pro Bowl after the pro season.</Empty></Card>;
+  return <Card title="All-star games" right={<span className="inline-flex gap-1">{chip("all", "All")}{chip("hs", "High school")}{chip("col", "College")}{chip("pro", "Pro")}</span>} pad={false}>
+    {list.map((g, i) => { const k = g.key + g.y, o = open === k, w = g.sc[0] > g.sc[1] ? 0 : 1; return <div key={k} className="border-b border-white/5 px-4 py-3">
+      <div className="flex items-center gap-3 cursor-pointer" onClick={() => setOpen(o ? null : k)}>
+        <div className="w-12 disp text-slate-500">{g.y}</div>
+        <div className="flex-1 min-w-0"><div className="text-sm font-semibold truncate">{g.title}</div><div className="text-[10px] text-slate-500">{g.city} · {g.n} players</div></div>
+        <div className="text-sm tnum text-right"><span className={w === 0 ? "text-amber-300 font-bold" : "text-slate-400"}>{g.sides[0]} {g.sc[0]}</span> <span className="text-slate-600">–</span> <span className={w === 1 ? "text-amber-300 font-bold" : "text-slate-400"}>{g.sc[1]} {g.sides[1]}</span></div></div>
+      {g.mvp && <div className="text-xs text-slate-400 mt-1 ml-15">MVP: <PLink pid={g.mvp.pid} name={g.mvp.n} /> <span className="text-slate-500">{g.mvp.pos}{g.mvp.from ? ", " + g.mvp.from : ""} — {g.mvp.line}</span></div>}
+      {o && <div className="grid sm:grid-cols-2 gap-3 mt-2">{g.rosters.map((r, j) => <div key={j}><div className="text-[10px] uppercase tracking-widest text-slate-500 mb-1">{g.sides[j]}</div><div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs">{r.map(x => <span key={x.pid}><span className="text-slate-500">{x.pos}</span> <PLink pid={x.pid} name={x.n} /></span>)}</div></div>)}</div>}</div>; })}
+  </Card>;
 }
 
 /* ----------------------------- program legends ----------------------------- */
